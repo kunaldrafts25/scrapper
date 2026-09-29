@@ -68,7 +68,8 @@ def create_job(request: JobRequest, tenant_id: str = Depends(tenant)):
         result, snapshots = run_hard(request, on_tick=lambda: store.renew_claim(
             tenant_id, request.idempotency_key, fingerprint, owner))
         output = result.model_dump()
-        store.put(tenant_id, result.job_id, request.idempotency_key, fingerprint, output, snapshots, owner=owner)
+        store.put(tenant_id, result.job_id, request.idempotency_key, fingerprint, output, snapshots,
+                  owner=owner, request_payload=payload)
         return output
     except FetchError as exc:
         store.release_claim(tenant_id, request.idempotency_key, fingerprint, owner)
@@ -137,10 +138,8 @@ form.addEventListener('submit',async event=>{event.preventDefault();out.replaceC
   for(const item of evidence){add(section,'h3',item.source_url+' '+item.locator);add(section,'blockquote',item.excerpt);
    if(item.source_node){add(section,'p','Source node:');add(section,'mark',item.source_node);}
    if(!item.source_bound){add(section,'p','Source binding could not be checked');continue;}
-   const capture=await fetch('/v1/jobs/'+id+'/snapshots/'+item.snapshot_hash,{headers,cache:'no-store'});
    const pre=add(section,'pre','');
-   if(!capture.ok){pre.textContent='Capture unavailable';continue;}
-   const raw=await capture.text(), position=item.source_node?raw.indexOf(item.source_node):-1;
+   const raw=item.capture_text||'', position=item.source_node?raw.indexOf(item.source_node):-1;
    if(position>=0){pre.append(document.createTextNode(raw.slice(0,position)));
     add(pre,'mark',item.source_node);pre.append(document.createTextNode(raw.slice(position+item.source_node.length)));}
    else pre.textContent=raw;}
@@ -240,6 +239,7 @@ def export_labels(job_id: str, tenant_id: str = Depends(tenant)):
     minutes = sum(item["time_spent_seconds"] for item in reviews.values()) / 60
     return {"label_schema_version": "1.0", "job_id": job_id, "requested_url": result["requested_url"],
             "machine_schema_version": result["schema_version"], "extraction_version": result["extraction_version"],
+            "request": store.get_request(tenant_id, job_id),
             "machine_result": result, "reviews": reviews, "reviewed_fields": len(reviews),
             "review_minutes_total": round(minutes, 4), "review_minutes_per_accepted_field":
                 round(minutes / accepted, 4) if accepted else None,
@@ -256,10 +256,13 @@ def review_evidence(job_id: str, tenant_id: str = Depends(tenant)):
         evidence = field["evidence"] + [candidate["evidence"] for candidate in field["candidates"]]
         rows = []
         for item in evidence:
-            bound = any(page.get("url") == item["source_url"] and page.get("fetched_at") == item["fetched_at"]
-                        and page.get("snapshot_hash") == item["snapshot_hash"] for page in result["pages"])
-            capture = store.snapshot(tenant_id, job_id, item["snapshot_hash"]) if bound else None
-            rows.append({**item, "source_node": source_node_for(capture, item["locator"]) if capture else None,
-                         "source_bound": bool(bound and capture is not None)})
+            bound = next((page for page in result["pages"] if page.get("url") == item["source_url"] and
+                          page.get("fetched_at") == item["fetched_at"] and
+                          page.get("snapshot_hash") == item["snapshot_hash"]), None)
+            capture = store.snapshot_record(tenant_id, job_id, item["snapshot_hash"]) if bound else None
+            raw = capture["raw"] or capture["html"].encode("utf-8") if capture else None
+            decoded = raw.decode(bound.get("encoding", "utf-8"), "replace") if raw is not None else None
+            rows.append({**item, "source_node": source_node_for(decoded, item["locator"]) if decoded else None,
+                         "source_bound": bool(bound and raw is not None), "capture_text": decoded})
         output[name] = rows
     return output

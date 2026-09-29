@@ -1,0 +1,2 @@
+site_id,seed_url,plan_name,allowed_hostnames,page_hints,split,access_basis,robots_checked_at,approval_record,max_http_requests,provider_accounts,max_provider_spend_usd,notes
+SITE_01,https://REPLACE_WITH_APPROVED_HOST/,REPLACE_PLAN,REPLACE_HOST,/pricing,development,PENDING,PENDING,PENDING,5,NONE,0,Do not crawl until all approval fields are complete

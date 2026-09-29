@@ -6,4 +6,5 @@ __pycache__/
 .pytest_cache/
 pytest-cache-files-*/
 .tmp/
+benchmark/local/
 writeprobe.txt

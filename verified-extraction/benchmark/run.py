@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
+import random
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -30,13 +32,15 @@ class LocalAdapter:
                 if "error" in fixture:
                     raise FetchError(fixture["error"], "Frozen access-policy fixture")
                 encoding = fixture.get("encoding", "utf-8")
-                raw = fixture["html"].encode(encoding)
+                raw = base64.b64decode(fixture["raw_base64"], validate=True) if "raw_base64" in fixture else fixture["html"].encode(encoding)
                 decoded, chosen, errors = decode_html(raw, fixture.get("content_type", f"text/html; charset={encoding}"))
-                return Page(fixture.get("final_url", url), decoded, "2026-01-01T00:00:00+00:00",
-                            fixture.get("redirects", []), raw, chosen, errors)
-        seed = "https://" + case["site"] + "/"
-        request = JobRequest.model_validate({"url": seed, "schema": SCHEMA, "idempotency_key": case["id"],
-            "options": {"max_pages": 3, "max_depth": 1, "deadline_seconds": 10}})
+                return Page(fixture.get("final_url", url), decoded, fixture.get("fetched_at", "2026-01-01T00:00:00+00:00"),
+                            fixture.get("redirects", []), raw, chosen, errors, fixture.get("content_type", f"text/html; charset={encoding}"))
+        seed = case.get("seed", "https://" + case["site"] + "/")
+        request = JobRequest.model_validate({"url": seed, "schema": case.get("schema", SCHEMA),
+            "idempotency_key": case["id"], "page_hints": case.get("page_hints", []),
+            "allowed_hostnames": case.get("allowed_hostnames", []),
+            "options": case.get("options", {"max_pages": 3, "max_depth": 1, "deadline_seconds": 10})})
         result, captures = run_job(request, FrozenFetcher())
         return result.model_dump(), captures
 
@@ -89,8 +93,10 @@ def evidence_checks(field: dict, kind: str, captures: dict[str, Page], page_rows
         capture = captures.get(ev.snapshot_hash)
         bound = next((row for row in page_rows if row.get("url") == ev.source_url and
                       row.get("fetched_at") == ev.fetched_at and row.get("snapshot_hash") == ev.snapshot_hash), None)
-        source = (Page(ev.source_url, capture.html, ev.fetched_at, [], capture.raw,
-                       capture.encoding, capture.decoding_errors) if capture and bound else None)
+        source = (Page(ev.source_url, capture.raw.decode(bound.get("encoding", "utf-8"), "replace"),
+                       ev.fetched_at, [], capture.raw, bound.get("encoding", "utf-8"),
+                       bound.get("decoding_errors", 0), bound.get("content_type", capture.content_type))
+                  if capture and bound else None)
         candidate = Candidate(value=item["value"], unit=item.get("unit"), currency=item.get("currency"),
                               value_type=kind, numeric_encoding=item.get("numeric_encoding"), evidence=ev)
         checks.append(source is not None and verify_candidate(candidate, source))
@@ -111,7 +117,7 @@ def score(cases: list[dict]) -> dict:
         if result:
             for name, expected in case["expected"].items():
                 actual = result["fields"][name]
-                checks = evidence_checks(actual, SCHEMA["properties"][name]["type"], captures, result["pages"])
+                checks = evidence_checks(actual, case.get("schema", SCHEMA)["properties"][name]["type"], captures, result["pages"])
                 accepted = actual["state"] == "verified"
                 evidence_valid = bool(checks) and all(checks) if actual["state"] in {"verified", "conflicting"} else None
                 expected_value = expected.get("value")
@@ -124,12 +130,25 @@ def score(cases: list[dict]) -> dict:
                         correct = correct and actual.get("currency") == expected["currency"]
                     if "excerpt" in expected:
                         correct = correct and any(ev["excerpt"] == expected["excerpt"] and
-                            ev["source_url"] == expected.get("source_url", "https://" + case["site"] + "/")
+                            ev["source_url"] == expected.get("source_url", case.get("seed", "https://" + case["site"] + "/")) and
+                            ("snapshot_hash" not in expected or ev["snapshot_hash"] == expected["snapshot_hash"])
                             for ev in actual["evidence"])
                 if actual["state"] == "conflicting" and "candidates" in expected:
-                    expected_claims = {(c["value"], c.get("unit"), c.get("currency"), c["excerpt"]) for c in expected["candidates"]}
-                    actual_claims = {(c["value"], c.get("unit"), c.get("currency"), c["evidence"]["excerpt"]) for c in actual["candidates"]}
-                    correct = bool(evidence_valid) and actual_claims == expected_claims
+                    remaining = list(actual["candidates"])
+                    for claim in expected["candidates"]:
+                        match = next((item for item in remaining if
+                            item["value"] == claim["value"] and
+                            item.get("unit") == claim.get("unit") and
+                            item.get("currency") == claim.get("currency") and
+                            item["evidence"]["excerpt"] == claim["excerpt"] and
+                            ("source_url" not in claim or item["evidence"]["source_url"] == claim["source_url"]) and
+                            ("snapshot_hash" not in claim or item["evidence"]["snapshot_hash"] == claim["snapshot_hash"])), None)
+                        if match is None:
+                            correct = False
+                            break
+                        remaining.remove(match)
+                    else:
+                        correct = bool(evidence_valid) and not remaining and len(actual["candidates"]) == len(expected["candidates"])
                 fields[name] = {"expected": expected, "actual_state": actual["state"], "actual_value": actual["value"],
                     "actual_unit": actual.get("unit"), "actual_currency": actual.get("currency"),
                     "evidence_valid": evidence_valid, "correct": bool(correct)}
@@ -139,10 +158,35 @@ def score(cases: list[dict]) -> dict:
                 for name, expected in case["expected"].items()}
         rows.append({"id": case["id"], "site": case["site"], "split": case["split"],
                      "category": case["category"], "latency_seconds": duration, "failure": failure,
-                     "fields": fields, "result_status": result["status"] if result else None})
+                     "fields": fields, "result_status": result["status"] if result else None,
+                     "review_seconds": case.get("review_seconds"),
+                     "estimated_internal_cost_usd": result["usage"].get("estimated_internal_cost_usd") if result else None,
+                     "raw_result": result})
     return {"per_case": rows, "summary": summarize(rows),
             "by_category": {category: summarize([row for row in rows if row["category"] == category])
-                            for category in sorted({row["category"] for row in rows})}}
+                            for category in sorted({row["category"] for row in rows})},
+            "site_bootstrap_95pct": bootstrap_interval(rows),
+            "failure_examples": [{"site": row["site"], "failure": row["failure"],
+                                  "wrong_fields": [name for name, field in row["fields"].items() if not field["correct"]]}
+                                 for row in rows if row["failure"] or any(not field["correct"] for field in row["fields"].values())]}
+
+
+def bootstrap_interval(rows: list[dict]) -> dict:
+    if len(rows) < 2:
+        return {"field_precision": None, "field_recall": None}
+    rng = random.Random(13)
+    values = {"field_precision": [], "field_recall": []}
+    for _ in range(500):
+        sample = [rng.choice(rows) for _ in rows]
+        summary = summarize(sample)
+        for key in values:
+            if summary[key] is not None:
+                values[key].append(summary[key])
+    output = {}
+    for key, samples in values.items():
+        samples.sort()
+        output[key] = [samples[int(0.025 * (len(samples) - 1))], samples[int(0.975 * (len(samples) - 1))]] if samples else None
+    return output
 
 
 def summarize(rows: list[dict]) -> dict:
@@ -150,8 +194,13 @@ def summarize(rows: list[dict]) -> dict:
                                  "missed_values", "abstentions", "expected_conflicts", "detected_conflicts",
                                  "evidence_checked", "evidence_valid", "failures")}
     elapsed = 0.0
+    review_seconds = 0.0
+    reviewed_cases = 0
     for row in rows:
         elapsed += row["latency_seconds"]
+        if row.get("review_seconds") is not None:
+            review_seconds += row["review_seconds"]
+            reviewed_cases += 1
         counts["failures"] += row["failure"] is not None
         for field in row["fields"].values():
             counts["fields"] += 1
@@ -179,6 +228,8 @@ def summarize(rows: list[dict]) -> dict:
         "evidence_validity": ratio(counts["evidence_valid"], counts["evidence_checked"]),
         "mean_latency_seconds": ratio(elapsed, len(rows)),
         "failure_rate": ratio(counts["failures"], len(rows)),
+        "reviewed_cases": reviewed_cases,
+        "review_minutes_per_correct_accepted_field": ratio(review_seconds / 60, counts["correct_accepted"]) if reviewed_cases else None,
         "setup_review_time_minutes": None, "cost_per_accepted_field_usd": None}
 
 

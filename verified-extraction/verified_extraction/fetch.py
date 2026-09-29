@@ -29,6 +29,7 @@ class Page:
     raw: bytes | None = None
     encoding: str = "utf-8"
     decoding_errors: int = 0
+    content_type: str = "text/html; charset=utf-8"
 
     def __post_init__(self):
         if self.raw is None:
@@ -191,4 +192,5 @@ class HTTPFetcher:
         if not headers.get("content-type", "text/html").split(";")[0] in {"text/html", "text/plain"}:
             raise FetchError("UNSUPPORTED_CONTENT", "Only HTML or plain text is supported")
         decoded, encoding, errors = decode_html(body, headers.get("content-type", ""))
-        return Page(final, decoded, datetime.now(timezone.utc).isoformat(), chain, body, encoding, errors)
+        return Page(final, decoded, datetime.now(timezone.utc).isoformat(), chain, body, encoding, errors,
+                    headers.get("content-type", "text/html"))

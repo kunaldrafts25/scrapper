@@ -35,13 +35,17 @@ class Store:
                 PRIMARY KEY(tenant,job_id,field_name));
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(snapshots)")}
-            for column, definition in (("raw", "BLOB"), ("encoding", "TEXT"), ("decoding_errors", "INTEGER")):
+            for column, definition in (("raw", "BLOB"), ("encoding", "TEXT"),
+                                       ("decoding_errors", "INTEGER"), ("content_type", "TEXT")):
                 if column not in columns:
                     db.execute(f"ALTER TABLE snapshots ADD COLUMN {column} {definition}")
             claim_columns = {row[1] for row in db.execute("PRAGMA table_info(claims)")}
             for column, definition in (("owner", "TEXT"), ("lease_until", "REAL"), ("attempts", "INTEGER DEFAULT 1")):
                 if column not in claim_columns:
                     db.execute(f"ALTER TABLE claims ADD COLUMN {column} {definition}")
+            job_columns = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
+            if "request_json" not in job_columns:
+                db.execute("ALTER TABLE jobs ADD COLUMN request_json TEXT")
 
     @contextmanager
     def _db(self):
@@ -92,7 +96,7 @@ class Store:
                        (tenant, key, request_hash, owner))
 
     def put(self, tenant: str, job_id: str, key: str, request_hash: str, result: dict,
-            snapshots: dict[str, Page | str], owner: str | None = None):
+            snapshots: dict[str, Page | str], owner: str | None = None, request_payload: dict | None = None):
         with self._db() as db:
             if owner is not None:
                 db.execute("BEGIN IMMEDIATE")
@@ -100,13 +104,15 @@ class Store:
                                    (tenant, key)).fetchone()
                 if claim != (owner, "pending", request_hash):
                     raise RuntimeError("CLAIM_LOST")
-            db.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?)", (tenant, job_id, key, request_hash, json.dumps(result),
-                datetime.now(timezone.utc).isoformat()))
-            db.executemany("INSERT INTO snapshots(tenant,job_id,hash,html,raw,encoding,decoding_errors) VALUES(?,?,?,?,?,?,?)",
+            db.execute("INSERT INTO jobs(tenant,id,idem,request_hash,result,created_at,request_json) VALUES(?,?,?,?,?,?,?)",
+                (tenant, job_id, key, request_hash, json.dumps(result), datetime.now(timezone.utc).isoformat(),
+                 json.dumps(request_payload) if request_payload is not None else None))
+            db.executemany("INSERT INTO snapshots(tenant,job_id,hash,html,raw,encoding,decoding_errors,content_type) VALUES(?,?,?,?,?,?,?,?)",
                            [(tenant, job_id, digest, value.html if isinstance(value, Page) else value,
                              value.raw if isinstance(value, Page) else value.encode("utf-8"),
                              value.encoding if isinstance(value, Page) else "utf-8",
-                             value.decoding_errors if isinstance(value, Page) else 0)
+                             value.decoding_errors if isinstance(value, Page) else 0,
+                             value.content_type if isinstance(value, Page) else "text/html; charset=utf-8")
                             for digest, value in snapshots.items()])
             db.execute("UPDATE claims SET state='complete',lease_until=NULL WHERE tenant=? AND idem=? AND request_hash=?",
                        (tenant, key, request_hash))
@@ -149,6 +155,11 @@ class Store:
             row = db.execute("SELECT result FROM jobs WHERE tenant=? AND id=?", (tenant, job_id)).fetchone()
         return json.loads(row[0]) if row else None
 
+    def get_request(self, tenant: str, job_id: str):
+        with self._db() as db:
+            row = db.execute("SELECT request_json FROM jobs WHERE tenant=? AND id=?", (tenant, job_id)).fetchone()
+        return json.loads(row[0]) if row and row[0] else None
+
     def snapshot(self, tenant: str, job_id: str, digest: str):
         record = self.snapshot_record(tenant, job_id, digest)
         return record["html"] if record else None
@@ -156,9 +167,9 @@ class Store:
     def snapshot_record(self, tenant: str, job_id: str, digest: str):
         self.purge_expired()
         with self._db() as db:
-            row = db.execute("SELECT html,raw,encoding,decoding_errors FROM snapshots WHERE tenant=? AND job_id=? AND hash=?",
+            row = db.execute("SELECT html,raw,encoding,decoding_errors,content_type FROM snapshots WHERE tenant=? AND job_id=? AND hash=?",
                              (tenant, job_id, digest)).fetchone()
-        return dict(zip(("html", "raw", "encoding", "decoding_errors"), row)) if row else None
+        return dict(zip(("html", "raw", "encoding", "decoding_errors", "content_type"), row)) if row else None
 
     def delete(self, tenant: str, job_id: str):
         with self._db() as db:

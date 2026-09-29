@@ -18,12 +18,13 @@ from .security import FetchError
 def _page_to_wire(page: Page) -> dict:
     return {"url": page.url, "html": page.html, "fetched_at": page.fetched_at,
             "redirects": page.redirects, "raw": base64.b64encode(page.raw).decode("ascii"),
-            "encoding": page.encoding, "decoding_errors": page.decoding_errors}
+            "encoding": page.encoding, "decoding_errors": page.decoding_errors, "content_type": page.content_type}
 
 
 def _page_from_wire(data: dict) -> Page:
     return Page(data["url"], data["html"], data["fetched_at"], data["redirects"],
-                base64.b64decode(data["raw"], validate=True), data["encoding"], data["decoding_errors"])
+                base64.b64decode(data["raw"], validate=True), data["encoding"], data["decoding_errors"],
+                data.get("content_type", "text/html; charset=utf-8"))
 
 
 def _run_child(callable_name: str) -> int:

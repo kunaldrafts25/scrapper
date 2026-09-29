@@ -64,6 +64,7 @@ def run_job(request: JobRequest, fetcher=None) -> tuple[Result, dict[str, Page]]
             page_rows.append({"url": page.url, "requested_url": url, "redirects": page.redirects,
                               "fetched_at": page.fetched_at, "snapshot_hash": snapshot_hash(page),
                               "encoding": page.encoding, "decoding_errors": page.decoding_errors,
+                              "content_type": page.content_type,
                               "status": "duplicate" if duplicate else "fetched"})
             if not duplicate and depth < request.options.max_depth:
                 queue.extend((link, depth + 1) for link in links_for(page, allowed, request.page_hints) if link not in seen)
