@@ -54,11 +54,17 @@ class Evidence(BaseModel):
     excerpt: str
     locator: str
     snapshot_hash: str
+    label: str | None = None
+    raw_value: str | None = None
 
 
 class Candidate(BaseModel):
     value: Any
     evidence: Evidence
+    unit: str | None = None
+    currency: str | None = None
+    value_type: Literal["string", "number", "integer", "boolean"] | None = None
+    reason: str | None = None
 
 
 class FieldResult(BaseModel):
@@ -67,6 +73,8 @@ class FieldResult(BaseModel):
     evidence: list[Evidence] = Field(default_factory=list)
     candidates: list[Candidate] = Field(default_factory=list)
     reason: str | None = None
+    unit: str | None = None
+    currency: str | None = None
 
     @model_validator(mode="after")
     def verified_has_evidence(self):
@@ -77,7 +85,7 @@ class FieldResult(BaseModel):
 
 class Result(BaseModel):
     schema_version: str = "1.0"
-    extraction_version: str = "0.1.0"
+    extraction_version: str = "0.2.0"
     job_id: str
     status: Literal["complete", "partial", "failed"]
     requested_url: str

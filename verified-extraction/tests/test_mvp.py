@@ -47,7 +47,7 @@ def test_verified_conflict_missing_and_capture():
     assert result.fields["support"].state == "verified"
     evidence = result.fields["support"].evidence[0]
     assert verify_candidate(result.fields["plan_price"].candidates[0], captures[result.fields["plan_price"].candidates[0].evidence.snapshot_hash])
-    assert evidence.excerpt in captures[evidence.snapshot_hash]
+    assert evidence.excerpt in captures[evidence.snapshot_hash].html
     assert result.fields["usage_limit"].state == "missing"
 
 

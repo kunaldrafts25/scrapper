@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import http.client
+import codecs
+import re
 import socket
 import ssl
 import time
@@ -22,6 +24,42 @@ class Page:
     html: str
     fetched_at: str
     redirects: list[str]
+    raw: bytes | None = None
+    encoding: str = "utf-8"
+    decoding_errors: int = 0
+
+    def __post_init__(self):
+        if self.raw is None:
+            self.raw = self.html.encode("utf-8")
+
+
+def decode_html(body: bytes, content_type: str) -> tuple[str, str, int]:
+    """BOM, valid HTTP charset, valid HTML meta charset, then UTF-8."""
+    encoding = None
+    if body.startswith(codecs.BOM_UTF8):
+        encoding = "utf-8-sig"
+    elif body.startswith(codecs.BOM_UTF16_LE) or body.startswith(codecs.BOM_UTF16_BE):
+        encoding = "utf-16"
+    if encoding is None:
+        match = re.search(r"charset\s*=\s*['\"]?([^;\s'\"]+)", content_type, re.I)
+        if match:
+            encoding = match.group(1)
+    if encoding is None:
+        head = body[:4096].decode("ascii", "ignore")
+        match = re.search(r"<meta[^>]+charset\s*=\s*['\"]?([\w.-]+)", head, re.I)
+        if match:
+            encoding = match.group(1)
+    try:
+        encoding = codecs.lookup(encoding or "utf-8").name
+    except LookupError:
+        encoding = "utf-8"
+    try:
+        text = body.decode(encoding, "strict")
+        errors = 0
+    except UnicodeDecodeError:
+        text = body.decode(encoding, "replace")
+        errors = text.count("\ufffd")
+    return text, encoding, errors
 
 
 class PinnedHTTPS(http.client.HTTPSConnection):
@@ -137,10 +175,11 @@ class HTTPFetcher:
     def fetch(self, url: str) -> Page:
         url = check_scope(url, self.allowed)
         final, chain, status, headers, body = self._follow(url, check_robots=True)
-        if status in (401, 403, 429):
+        if status in (401, 403, 407, 429, 451):
             raise FetchError("ACCESS_DENIED", f"HTTP {status}; Retry-After: {headers.get('retry-after', 'none')}")
         if status != 200:
             raise FetchError("HTTP_ERROR", f"HTTP {status}")
         if not headers.get("content-type", "text/html").split(";")[0] in {"text/html", "text/plain"}:
             raise FetchError("UNSUPPORTED_CONTENT", "Only HTML or plain text is supported")
-        return Page(final, body.decode("utf-8", "replace"), datetime.now(timezone.utc).isoformat(), chain)
+        decoded, encoding, errors = decode_html(body, headers.get("content-type", ""))
+        return Page(final, decoded, datetime.now(timezone.utc).isoformat(), chain, body, encoding, errors)

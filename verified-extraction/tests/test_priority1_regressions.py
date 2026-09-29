@@ -108,11 +108,29 @@ def test_concurrent_idempotency_one_crawl(monkeypatch):
     path.unlink()
 
 
+def test_claims_coordinate_separate_store_instances():
+    path = Path(f"test-{uuid.uuid4().hex}.db")
+    first, second = Store(str(path)), Store(str(path))
+    assert first.claim("a", "key", "payload") == "owner"
+    assert second.claim("a", "key", "payload") == "pending"
+    assert second.claim("a", "key", "different") == "conflict"
+    first.put("a", "job", "key", "payload", {"fields": {}, "usage": {}}, {})
+    assert second.claim("a", "key", "payload") == "complete"
+    assert second.by_key("a", "key")[1]["fields"] == {}
+    path.unlink()
+
+
 def test_metrics_are_tenant_scoped(monkeypatch):
+    path = Path(f"test-{uuid.uuid4().hex}.db")
+    monkeypatch.setattr(api, "store", Store(str(path)))
     monkeypatch.setenv("VE_KEYS", '{"a":"secret-a","b":"secret-b"}')
+    api.store.put("a", "one", "key", "hash", {"fields": {"support": {"state": "verified"}},
+        "usage": {"pages_fetched": 1}}, {"digest": "source"})
     client = TestClient(api.app)
     a = client.get("/v1/metrics", headers={"Authorization": "Bearer secret-a"})
     b = client.get("/v1/metrics", headers={"Authorization": "Bearer secret-b"})
     assert a.status_code == b.status_code == 200
     assert a.json().get("tenant_id") == "a"
     assert b.json().get("tenant_id") == "b"
+    assert a.json()["jobs"] == 1 and b.json()["jobs"] == 0
+    path.unlink()

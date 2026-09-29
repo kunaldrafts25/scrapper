@@ -4,10 +4,11 @@ import hmac
 import html
 import logging
 import os
+import secrets
 import time
 from fastapi import FastAPI, Header, HTTPException, Depends, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.responses import JSONResponse
 
 from .models import JobRequest
@@ -90,6 +91,50 @@ def get_snapshot(job_id: str, digest: str, tenant_id: str = Depends(tenant)):
     return source
 
 
+@app.get("/v1/jobs/{job_id}/snapshots/{digest}/raw")
+def get_raw_snapshot(job_id: str, digest: str, tenant_id: str = Depends(tenant)):
+    record = store.snapshot_record(tenant_id, job_id, digest)
+    if record is None:
+        raise HTTPException(404, detail={"code": "NOT_FOUND"})
+    return Response(content=record["raw"] or record["html"].encode("utf-8"),
+                    media_type="application/octet-stream",
+                    headers={"Content-Disposition": 'attachment; filename="capture.bin"',
+                             "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/review", response_class=HTMLResponse)
+def review_app():
+    """Token stays in page memory; all customer content enters through textContent."""
+    nonce = secrets.token_urlsafe(18)
+    document = """<!doctype html><html><head><meta charset='utf-8'><title>Evidence review</title></head>
+<body><h1>Evidence review</h1><form id='form'><label>Job ID <input id='job' required></label>
+<label>Bearer key <input id='key' type='password' required autocomplete='off'></label>
+<button>Load</button></form><div id='result'></div>
+<script nonce='NONCE'>
+const form=document.getElementById('form'), out=document.getElementById('result');
+function add(parent,tag,value){const node=document.createElement(tag);node.textContent=value;parent.append(node);return node;}
+form.addEventListener('submit',async event=>{event.preventDefault();out.replaceChildren();
+ const id=document.getElementById('job').value.trim(), key=document.getElementById('key').value;
+ if(!/^[0-9a-f-]{36}$/i.test(id)){add(out,'p','Invalid job ID');return;}
+ const headers={Authorization:'Bearer '+key};
+ const response=await fetch('/v1/jobs/'+id,{headers,cache:'no-store'});
+ if(!response.ok){add(out,'p','Could not load job ('+response.status+')');return;}
+ const job=await response.json();
+ for(const [name,field] of Object.entries(job.fields)){
+  const section=add(out,'section','');add(section,'h2',name+' — '+field.state);
+  add(section,'p','Value: '+JSON.stringify(field.value)+(field.unit?' / '+field.unit:'')+(field.currency?' '+field.currency:''));
+  const evidence=[...field.evidence,...field.candidates.map(c=>c.evidence)];
+  for(const item of evidence){add(section,'h3',item.source_url+' '+item.locator);add(section,'blockquote',item.excerpt);
+   const capture=await fetch('/v1/jobs/'+id+'/snapshots/'+item.snapshot_hash,{headers,cache:'no-store'});
+   add(section,'pre',capture.ok?await capture.text():'Capture unavailable');}
+ }
+});
+</script></body></html>""".replace("NONCE", nonce)
+    return HTMLResponse(document, headers={"Content-Security-Policy": f"default-src 'none'; script-src 'nonce-{nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'",
+                                         "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+                                         "X-Content-Type-Options": "nosniff"})
+
+
 @app.get("/v1/jobs/{job_id}/review", response_class=HTMLResponse)
 def review(job_id: str, tenant_id: str = Depends(tenant)):
     result = store.get(tenant_id, job_id)
@@ -108,7 +153,9 @@ def review(job_id: str, tenant_id: str = Depends(tenant)):
                         f"<blockquote>{html.escape(item['excerpt'])}</blockquote><pre>{html.escape(capture)}</pre></details>")
         rows.append(f"<section><h2>{html.escape(name)}: {html.escape(field['state'])}</h2>"
                     f"<p>Value: {html.escape(str(field['value']))}</p>{''.join(bits)}</section>")
-    return "<!doctype html><html><head><meta charset='utf-8'><title>Evidence review</title><style>body{font:16px system-ui;max-width:900px;margin:2rem auto;padding:1rem}pre{white-space:pre-wrap;max-height:24rem;overflow:auto;background:#eee;padding:1rem}section{border-top:1px solid #aaa}</style></head><body><h1>Evidence review</h1>" + "".join(rows) + "</body></html>"
+    document = "<!doctype html><html><head><meta charset='utf-8'><title>Evidence review</title></head><body><h1>Evidence review</h1>" + "".join(rows) + "</body></html>"
+    return HTMLResponse(document, headers={"Content-Security-Policy": "default-src 'none'; base-uri 'none'",
+                                           "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"})
 
 
 @app.delete("/v1/jobs/{job_id}")

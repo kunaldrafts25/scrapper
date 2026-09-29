@@ -5,28 +5,37 @@ import json
 import re
 from urllib.parse import urljoin, urlsplit
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 
 from .fetch import Page
 from .models import Candidate, Evidence, FieldResult
 from .security import canonical_url, FetchError
 
 
-def snapshot_hash(html: str) -> str:
-    return hashlib.sha256(html.encode("utf-8")).hexdigest()
+def snapshot_hash(source: Page | bytes | str) -> str:
+    raw = source.raw if isinstance(source, Page) else source.encode("utf-8") if isinstance(source, str) else source
+    return hashlib.sha256(raw).hexdigest()
 
 
-def is_hidden(tag) -> bool:
+def dom_path(tag: Tag) -> str:
+    parts = []
+    while isinstance(tag, Tag) and tag.name != "[document]":
+        index = 1 + sum(isinstance(s, Tag) and s.name == tag.name for s in tag.previous_siblings)
+        parts.append(f"{tag.name}:nth-of-type({index})")
+        tag = tag.parent
+    return " > ".join(reversed(parts))
+
+
+def is_hidden(tag: Tag) -> bool:
     for node in [tag, *tag.parents]:
         if not getattr(node, "attrs", None):
             continue
         if node.has_attr("hidden") or str(node.get("aria-hidden", "")).lower() == "true":
             return True
         style = re.sub(r"\s+", "", str(node.get("style", "")).lower())
-        if re.search(r"(?:^|;)display:none(?:!important)?(?:;|$)", style):
-            return True
-        if re.search(r"(?:^|;)visibility:hidden(?:!important)?(?:;|$)", style):
-            return True
-        if re.search(r"(?:^|;)opacity:0(?:\.0+)?(?:!important)?(?:;|$)", style):
+        if any(re.search(p, style) for p in (r"(?:^|;)display:none(?:!important)?(?:;|$)",
+                                         r"(?:^|;)visibility:hidden(?:!important)?(?:;|$)",
+                                         r"(?:^|;)opacity:0(?:\.0+)?(?:!important)?(?:;|$)")):
             return True
     return False
 
@@ -39,99 +48,142 @@ def visible_blocks(html: str) -> list[tuple[str, str]]:
     for tag in soup.find_all(["p", "li", "h1", "h2", "h3", "tr", "dt", "dd"]):
         if is_hidden(tag):
             continue
-        value = tag.get_text(" ", strip=True)
-        if value and len(value) <= 400:
-            blocks.append((value, f"{tag.name}[{len(blocks)+1}]"))
+        text = tag.get_text(" ", strip=True)
+        if text and len(text) <= 400:
+            blocks.append((text, dom_path(tag)))
     return blocks
 
 
-def _coerce(raw: str, kind: str):
-    raw = raw.strip().strip(". ")
+NUMBER = re.compile(r"^\s*(?P<currency>USD|EUR|GBP|INR|[$\u20ac\u00a3\u20b9])?\s*"
+                    r"(?P<number>-?\d+(?:\.\d+)?)\s*"
+                    r"(?P<unit>(?:/\s*|per\s+)?(?:month|year|day|user|seat|GB)|monthly|annually)?\s*"
+                    r"(?P<suffix>USD|EUR|GBP|INR|dollars)?\s*$", re.I)
+CURRENCY = {"$": "USD", "\u20ac": "EUR", "\u00a3": "GBP", "\u20b9": "INR", "dollars": "USD"}
+
+
+def parse_scalar(raw: str, kind: str):
+    raw = raw.strip()
     if kind == "string":
-        return raw[:200] if raw else None
+        return (raw, None, None) if 0 < len(raw) <= 200 else None
     if kind == "boolean":
-        if raw.lower() in {"true", "yes"}:
-            return True
-        if raw.lower() in {"false", "no"}:
-            return False
-        return None
-    match = re.fullmatch(r"(?:[$€£₹]|USD\s*)?\s*(-?\d+(?:\.\d+)?)\s*(?:(?:/|per\s+)?(?:month|year|day|user|seat|GB)|monthly|annually|USD|dollars)?", raw, re.I)
+        value = {"true": True, "yes": True, "false": False, "no": False}.get(raw.lower())
+        return (value, None, None) if value is not None else None
+    match = NUMBER.fullmatch(raw)
     if not match:
         return None
-    number = float(match.group(1))
-    return int(number) if kind == "integer" and number.is_integer() else number if kind == "number" else None
+    number = float(match.group("number"))
+    if kind == "integer" and not number.is_integer():
+        return None
+    prefix, suffix = match.group("currency"), match.group("suffix")
+    prefix = CURRENCY.get(prefix, prefix.upper() if prefix else None)
+    suffix = CURRENCY.get(suffix.lower(), suffix.upper()) if suffix else None
+    if prefix and suffix and prefix != suffix:
+        return None
+    unit = match.group("unit")
+    unit = unit.strip().lstrip("/").strip().lower() if unit else None
+    if unit and unit.startswith("per "):
+        unit = unit[4:]
+    unit = {"monthly": "month", "annually": "year", "gb": "GB"}.get(unit, unit)
+    return (int(number) if kind == "integer" else number, unit, prefix or suffix)
+
+
+def label_pattern(label: str):
+    return re.compile(r"^\s*" + re.escape(label) + r"\s*[:\-\u2013]\s*(.+?)\s*$", re.I)
 
 
 def candidates_for(page: Page, name: str, spec: dict) -> list[Candidate]:
     label = spec.get("title") or name.replace("_", " ")
-    if not isinstance(label, str) or len(label) > 80:
-        return []
-    pattern = re.compile(r"^\s*" + re.escape(label) + r"\s*[:\-–]\s*(.+?)\s*$", re.I)
     results = []
-    digest = snapshot_hash(page.html)
+    digest = snapshot_hash(page)
     for excerpt, locator in visible_blocks(page.html):
-        match = pattern.match(excerpt)
+        match = label_pattern(label).match(excerpt)
         if not match:
             continue
-        value = _coerce(match.group(1), spec["type"])
-        if value is not None:
-            results.append(Candidate(value=value, evidence=Evidence(source_url=page.url, fetched_at=page.fetched_at,
-                excerpt=excerpt, locator=locator, snapshot_hash=digest)))
-    # JSON-LD is accepted only when the exact key and scalar occur in retained script content.
+        raw_value = match.group(1)
+        parsed = parse_scalar(raw_value, spec["type"])
+        if parsed is not None:
+            value, unit, currency = parsed
+            results.append(Candidate(value=value, unit=unit, currency=currency, value_type=spec["type"],
+                evidence=Evidence(source_url=page.url, fetched_at=page.fetched_at, excerpt=excerpt,
+                    locator=locator, snapshot_hash=digest, label=label, raw_value=raw_value)))
     soup = BeautifulSoup(page.html, "html.parser")
-    for index, script in enumerate(soup.find_all("script", type="application/ld+json"), 1):
+    for script in soup.find_all("script", type="application/ld+json"):
+        if is_hidden(script):
+            continue
         try:
             data = json.loads(script.string or "")
-        except json.JSONDecodeError:
+        except (ValueError, TypeError):
             continue
-        nodes = data if isinstance(data, list) else [data]
-        for node in nodes:
-            if isinstance(node, dict) and name in node and isinstance(node[name], (str, int, float, bool)):
-                value = _coerce(str(node[name]), spec["type"])
-                if value is not None:
-                    excerpt = json.dumps({name: node[name]}, ensure_ascii=False)
-                    results.append(Candidate(value=value, evidence=Evidence(source_url=page.url, fetched_at=page.fetched_at,
-                        excerpt=excerpt, locator=f"script[ld+json][{index}]", snapshot_hash=digest)))
+        for index, node in enumerate(data if isinstance(data, list) else [data]):
+            if not isinstance(node, dict) or name not in node or not isinstance(node[name], (str, int, float, bool)):
+                continue
+            raw_value = str(node[name])
+            parsed = parse_scalar(raw_value, spec["type"])
+            if parsed is not None:
+                value, unit, currency = parsed
+                results.append(Candidate(value=value, unit=unit, currency=currency, value_type=spec["type"],
+                    evidence=Evidence(source_url=page.url, fetched_at=page.fetched_at,
+                        excerpt=json.dumps({name: node[name]}, ensure_ascii=False),
+                        locator=f"{dom_path(script)}::item({index})::{name}", snapshot_hash=digest,
+                        label=name, raw_value=raw_value)))
     return results
 
 
-def verify_candidate(candidate: Candidate, html: str) -> bool:
-    if snapshot_hash(html) != candidate.evidence.snapshot_hash:
+def verify_candidate(candidate: Candidate, source: Page | bytes | str) -> bool:
+    if snapshot_hash(source) != candidate.evidence.snapshot_hash:
         return False
-    excerpt = candidate.evidence.excerpt
-    if candidate.evidence.locator.startswith("script[ld+json]"):
+    html = source.html if isinstance(source, Page) else source.decode("utf-8", "replace") if isinstance(source, bytes) else source
+    ev = candidate.evidence
+    if not ev.label or ev.raw_value is None or not candidate.value_type:
+        return False
+    if "::item(" in ev.locator:
         try:
-            expected = json.loads(excerpt)
+            script_path, item_part, key = ev.locator.split("::", 2)
+            index = int(item_part.removeprefix("item(").removesuffix(")"))
             soup = BeautifulSoup(html, "html.parser")
-            for script in soup.find_all("script", type="application/ld+json"):
-                data = json.loads(script.string or "")
-                for node in data if isinstance(data, list) else [data]:
-                    if isinstance(node, dict) and all(node.get(key) == value for key, value in expected.items()):
-                        return True
-        except (ValueError, TypeError):
-            pass
-        return False
-    return any(text == excerpt for text, _ in visible_blocks(html))
+            script = next(tag for tag in soup.find_all("script", type="application/ld+json")
+                          if dom_path(tag) == script_path and not is_hidden(tag))
+            data = json.loads(script.string or "")
+            node = (data if isinstance(data, list) else [data])[index]
+            if key != ev.label or not isinstance(node, dict) or key not in node:
+                return False
+            if json.dumps({key: node[key]}, ensure_ascii=False) != ev.excerpt or str(node[key]) != ev.raw_value:
+                return False
+        except (ValueError, TypeError, IndexError, StopIteration):
+            return False
+    else:
+        block = next((text for text, path in visible_blocks(html) if path == ev.locator), None)
+        if block != ev.excerpt:
+            return False
+        match = label_pattern(ev.label).match(block)
+        if not match or match.group(1) != ev.raw_value:
+            return False
+    return parse_scalar(ev.raw_value, candidate.value_type) == (candidate.value, candidate.unit, candidate.currency)
 
 
 def extract_fields(pages: list[Page], properties: dict, blocked: bool) -> dict[str, FieldResult]:
     output = {}
     for name, spec in properties.items():
         raw = [candidate for page in pages for candidate in candidates_for(page, name, spec)]
-        good = [candidate for candidate in raw if next((verify_candidate(candidate, page.html) for page in pages
-                if page.url == candidate.evidence.source_url and snapshot_hash(page.html) == candidate.evidence.snapshot_hash), False)]
+        good = [candidate for candidate in raw if any(page.url == candidate.evidence.source_url
+            and verify_candidate(candidate, page) for page in pages)]
+        relevant = [c for c in good if (not spec.get("x-unit") or c.unit == spec["x-unit"])
+                    and (not spec.get("x-currency") or c.currency == spec["x-currency"])]
         unique = {}
-        for candidate in good:
-            unique.setdefault(json.dumps(candidate.value, sort_keys=True), []).append(candidate)
+        for candidate in relevant:
+            key = json.dumps([candidate.value, candidate.unit, candidate.currency], sort_keys=True)
+            unique.setdefault(key, []).append(candidate)
         if len(unique) == 1:
-            candidates = next(iter(unique.values()))
-            output[name] = FieldResult(state="verified", value=candidates[0].value,
-                                       evidence=[c.evidence for c in candidates])
+            values = next(iter(unique.values()))
+            first = values[0]
+            output[name] = FieldResult(state="verified", value=first.value, unit=first.unit,
+                currency=first.currency, evidence=[c.evidence for c in values])
         elif len(unique) > 1:
             output[name] = FieldResult(state="conflicting", candidates=[values[0] for values in unique.values()],
-                                       reason="Distinct source-backed values")
-        elif raw:
-            output[name] = FieldResult(state="unverified", reason="Candidate failed source verification")
+                reason="Distinct source-backed value, unit, or currency claims")
+        elif raw or any(label_pattern(spec.get("title") or name.replace("_", " ")).match(text)
+                        for page in pages for text, _ in visible_blocks(page.html)):
+            output[name] = FieldResult(state="unverified", reason="Candidate unsupported, unit mismatch, or evidence check failed")
         elif blocked:
             output[name] = FieldResult(state="blocked", reason="Source access blocked")
         else:
