@@ -73,6 +73,9 @@ def finalize(cases: list[dict], scored: dict, inventory: list[dict], agreement: 
         reviews = case["assisted_reviews"].get("reviews", {})
         if set(reviews) != set(row["fields"]):
             raise ValueError(f"Site {row['site']} lacks machine-assisted verdicts for every field")
+        sessions = case["assisted_reviews"].get("review_sessions", [])
+        if not sessions or {session.get("field_name") for session in sessions} != set(row["fields"]):
+            raise ValueError(f"Site {row['site']} lacks assisted review sessions for every field")
         if row["split"] == "held_out":
             assisted_verdict_errors += sum(
                 (review.get("verdict") == "correct") != bool(row["fields"][name]["correct"])

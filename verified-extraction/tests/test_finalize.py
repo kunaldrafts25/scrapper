@@ -25,12 +25,16 @@ def test_finalization_refuses_partial_and_requires_real_measurements():
               "seed": row["seed_url"], "live_elapsed_seconds": 1,
               "http_requests_started": 2, "manual_baseline_seconds": 120,
               "manual_baseline_errors": 0, "review_seconds": 20,
-              "blind_label_seconds": 30, "assisted_reviews": {"review_sessions": [{}], "reviews": {}},
+              "blind_label_seconds": 30, "assisted_reviews": {"review_sessions": [{"field_name": "named_plan"}],
+                                                              "reviews": {"named_plan": {"verdict": "correct"}}},
               "independent_labels": {"reviewer_a": {}, "reviewer_b": {} if row["split"] == "development" else {"fields": {}},
                                      "adjudication": {} if row["split"] == "development" else {"fields": {}}},
               "code_revision": "abc", "capture_date": "2026-10-15T12:00:00+00:00"}
              for row in inventory]
-    scored = {"per_case": [{"site": case["site"], "split": case["split"], "fields": {},
+    scored = {"per_case": [{"site": case["site"], "split": case["split"],
+                            "fields": {"named_plan": {"expected": {"state": "missing"},
+                                                      "actual_state": "missing", "correct": True,
+                                                      "evidence_valid": None}},
                             "latency_seconds": 0.1, "failure": None,
                             "access_failure_codes": [], "reviewed_row_correct": False,
                             "review_seconds": 20, "manual_baseline_seconds": 120,
