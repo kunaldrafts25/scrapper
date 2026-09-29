@@ -23,6 +23,10 @@ class JobRequest(BaseModel):
     def valid_schema(cls, value: dict[str, Any]) -> dict[str, Any]:
         if set(value) - {"type", "properties", "required", "title", "description"}:
             raise ValueError("unsupported schema keyword")
+        if "title" in value and (not isinstance(value["title"], str) or not value["title"].strip()):
+            raise ValueError("schema title must be a nonempty string")
+        if "description" in value and not isinstance(value["description"], str):
+            raise ValueError("schema description must be a string")
         props = value.get("properties")
         if value.get("type") != "object" or not isinstance(props, dict) or not 3 <= len(props) <= 10:
             raise ValueError("schema must be an object with 3 to 10 properties")
@@ -33,7 +37,7 @@ class JobRequest(BaseModel):
         for name, spec in props.items():
             if not isinstance(name, str) or not name or len(name) > 80 or not isinstance(spec, dict):
                 raise ValueError("invalid property")
-            if spec.get("type") not in {"string", "number", "integer", "boolean"}:
+            if not isinstance(spec.get("type"), str) or spec["type"] not in {"string", "number", "integer", "boolean"}:
                 raise ValueError("only scalar properties are supported")
             if set(spec) - {"type", "title", "description", "x-unit", "x-currency"}:
                 raise ValueError("unsupported property keyword")
@@ -41,9 +45,11 @@ class JobRequest(BaseModel):
                 raise ValueError("property title must be a nonempty string up to 80 characters")
             if "description" in spec and not isinstance(spec["description"], str):
                 raise ValueError("property description must be a string")
-            if "x-unit" in spec and (spec["type"] not in {"number", "integer"} or spec["x-unit"] not in {"month", "year", "day", "user", "seat", "GB"}):
+            if "x-unit" in spec and (spec["type"] not in {"number", "integer"} or
+                    not isinstance(spec["x-unit"], str) or spec["x-unit"] not in {"month", "year", "day", "user", "seat", "GB"}):
                 raise ValueError("x-unit must be a supported numeric unit")
-            if "x-currency" in spec and (spec["type"] not in {"number", "integer"} or spec["x-currency"] not in {"USD", "EUR", "GBP", "INR"}):
+            if "x-currency" in spec and (spec["type"] not in {"number", "integer"} or
+                    not isinstance(spec["x-currency"], str) or spec["x-currency"] not in {"USD", "EUR", "GBP", "INR"}):
                 raise ValueError("x-currency must be a supported numeric currency")
         return value
 

@@ -83,6 +83,16 @@ def test_bad_title_is_structured_422(monkeypatch, bad):
     assert response.json()["detail"]["code"] == "INVALID_REQUEST"
 
 
+@pytest.mark.parametrize("key,bad", [("type", []), ("x-unit", []), ("x-currency", {}), ("description", 5)])
+def test_bad_property_definition_is_structured_422(monkeypatch, key, bad):
+    monkeypatch.setenv("VE_KEYS", '{"a":"secret-a"}')
+    body = job().model_dump(by_alias=True)
+    body["schema"]["properties"]["plan_price"][key] = bad
+    response = TestClient(api.app).post("/v1/jobs", json=body, headers={"Authorization": "Bearer secret-a"})
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "INVALID_REQUEST"
+
+
 def test_concurrent_idempotency_one_crawl(monkeypatch):
     path = Path(f"test-{uuid.uuid4().hex}.db")
     monkeypatch.setattr(api, "store", Store(str(path)))
