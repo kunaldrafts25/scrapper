@@ -5,7 +5,7 @@ import json
 import re
 from urllib.parse import urljoin, urlsplit
 from bs4 import BeautifulSoup
-from bs4.element import Tag
+from bs4.element import Tag, NavigableString
 
 from .fetch import Page
 from .models import Candidate, Evidence, FieldResult
@@ -42,13 +42,23 @@ def is_hidden(tag: Tag) -> bool:
 
 def visible_blocks(html: str) -> list[tuple[str, str]]:
     soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "noscript", "template", "svg", "head"]):
-        tag.decompose()
+    def visible_text(node) -> str:
+        parts = []
+        def visit(current):
+            if isinstance(current, NavigableString):
+                value = str(current).strip()
+                if value:
+                    parts.append(value)
+            elif isinstance(current, Tag) and current.name not in {"script", "style", "noscript", "template", "svg", "head"} and not is_hidden(current):
+                for child in current.children:
+                    visit(child)
+        visit(node)
+        return " ".join(parts)
     blocks = []
     for tag in soup.find_all(["p", "li", "h1", "h2", "h3", "tr", "dt", "dd"]):
         if is_hidden(tag):
             continue
-        text = tag.get_text(" ", strip=True)
+        text = visible_text(tag)
         if text and len(text) <= 400:
             blocks.append((text, dom_path(tag)))
     return blocks

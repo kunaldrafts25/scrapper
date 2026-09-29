@@ -32,6 +32,8 @@ def job(**kwargs):
     '<div aria-hidden="true"><p>Support: Secret</p></div>',
     '<div style="visibility: hidden !important"><p>Support: Secret</p></div>',
     '<div style="opacity:0"><p>Support: Secret</p></div>',
+    '<p><span hidden>Support: Secret</span></p>',
+    '<p><span aria-hidden="true">Support: Secret</span></p>',
 ])
 def test_hidden_value_does_not_conflict_with_visible(hidden):
     page = Page("https://example.com/", hidden + "<p>Support: Email</p>", "now", [])
