@@ -1,0 +1,13 @@
+{
+  "confirmed_by": null,
+  "confirmed_at": null,
+  "analyst_hourly_rate_usd": null,
+  "thresholds": {
+    "min_precision": 0.95,
+    "min_recall": 0.5,
+    "min_accepted": 24,
+    "min_time_reduction": 0.25,
+    "max_cost_per_row_usd": 5.0,
+    "max_access_failures": 2
+  }
+}

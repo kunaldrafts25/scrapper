@@ -36,5 +36,10 @@ def test_candidate_inventory_is_frozen_by_site_but_not_approved():
     assert sum(row["split"] == "development" for row in rows) == 12
     assert sum(row["split"] == "held_out" for row in rows) == 12
     assert len({row["allowed_hostnames"] for row in rows}) == 24
-    with pytest.raises(ValueError, match="completed plan"):
-        validate_rows(rows)
+    proposal = validate_rows(rows, "proposal")
+    assert proposal["sites"] == 24
+    assert proposal["maximum_http_requests"] == 480
+    assert proposal["execution_ready"] is False
+    assert len(proposal["pending_site_fields"]) == 24
+    with pytest.raises(ValueError, match="Execution requires recorded approval"):
+        validate_rows(rows, "execution")
