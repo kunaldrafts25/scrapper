@@ -52,7 +52,8 @@ def export_local(store: Store, tenant: str, job_id: str, output: Path, site_id: 
         "capture_date": result["observed_at"], "permission_note": permission_note,
         "source_job_id": job_id, "pages": pages, "plan_name": plan_name,
         "code_revision": revision, "live_elapsed_seconds": result["usage"].get("elapsed_seconds"),
-        "http_requests_started": result["usage"].get("http_requests_started")}
+        "http_requests_started": result["usage"].get("http_requests_started"),
+        "access_policy_violations": None}
     template = {"label_schema_version": "2.0", "site_id": site_id, "split": split,
         "labeling_mode": "blind", "reviewer_id": None, "plan_name": plan_name,
         "fields": {name: {"state": None, "value": None, "plan_name": plan_name,
@@ -70,6 +71,15 @@ def export_local(store: Store, tenant: str, job_id: str, output: Path, site_id: 
             for name in request["schema"]["properties"]}}
     (output / "manual_baseline.template.json").write_text(
         json.dumps(baseline, indent=2, ensure_ascii=False), encoding="utf-8")
+    corrected = {"corrected_row_schema_version": "1.0", "site_id": site_id,
+        "source_job_id": job_id, "reviewer_id": None,
+        "fields": {name: {"state": None, "value": None, "plan_name": plan_name,
+            "unit": None, "currency": None, "billing_period": None,
+            "conditions": None, "ambiguity": None, "judgment": "explicit",
+            "rationale": None, "evidence": []}
+            for name in request["schema"]["properties"]}}
+    (output / "corrected_row.template.json").write_text(
+        json.dumps(corrected, indent=2, ensure_ascii=False), encoding="utf-8")
     if split == "held_out":
         adjudication = {"adjudication_schema_version": "1.0", "site_id": site_id,
             "reviewer_id": None, "fields": {name: {"decision": None, "reason": None,
@@ -183,6 +193,46 @@ def _validate_labels(manifest: dict, labels: dict) -> dict:
     return expected
 
 
+def _score_human_row(manifest: dict, expected: dict, proposed_fields: dict) -> dict[str, str]:
+    """Compare a source-cited human row with blind truth without requiring the same excerpt."""
+    captures = capture_index(manifest)
+    errors = {}
+    for name, truth in expected.items():
+        proposed = proposed_fields[name]
+        if proposed.get("plan_name") != manifest["plan_name"]:
+            errors[name] = "wrong named plan"
+        elif proposed.get("state") != truth["state"]:
+            errors[name] = "wrong state"
+        elif proposed.get("state") == "verified":
+            try:
+                validated = validate_claim(manifest, name, proposed, captures)
+            except (ValueError, KeyError, TypeError) as exc:
+                errors[name] = f"invalid cited evidence: {exc}"
+                continue
+            if any(validated.get(key) != truth.get(key) for key in
+                   ("value", "unit", "currency", "billing_period", "plan_name", "conditions")):
+                errors[name] = "wrong value or plan context"
+        elif proposed.get("state") == "conflicting":
+            candidates = proposed.get("candidates")
+            if not isinstance(candidates, list) or len(candidates) < 2:
+                errors[name] = "conflict needs two cited candidates"
+                continue
+            try:
+                validated = [validate_claim(manifest, name, {**item, "state": "verified"}, captures)
+                             for item in candidates]
+            except (ValueError, KeyError, TypeError) as exc:
+                errors[name] = f"invalid conflict evidence: {exc}"
+                continue
+            def signature(item):
+                return (item.get("value"), item.get("unit"), item.get("currency"),
+                        item.get("billing_period"), item.get("plan_name"), item.get("conditions"))
+            if sorted(map(str, map(signature, validated))) != sorted(map(str, map(signature, truth.get("candidates", [])))):
+                errors[name] = "wrong conflict candidates"
+        elif proposed.get("value") is not None or proposed.get("evidence"):
+            errors[name] = "unsupported value or evidence for nonverified state"
+    return errors
+
+
 def load_labeled_case(manifest_path: Path, labels_path: Path) -> dict:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     modern = manifest.get("fixture_version") == "real-2.0"
@@ -270,43 +320,32 @@ def load_labeled_case(manifest_path: Path, labels_path: Path) -> dict:
         baseline_seconds = seconds
         baseline_fields = len(expected)
         if modern:
-            captures = capture_index(manifest)
-            baseline_error_details = {}
-            for name, truth in expected.items():
-                proposed = baseline["fields"][name]
-                if proposed.get("state") != truth["state"]:
-                    baseline_error_details[name] = "wrong state"
-                elif proposed.get("state") == "verified":
-                    try:
-                        validated = validate_claim(manifest, name, proposed, captures)
-                    except (ValueError, KeyError, TypeError) as exc:
-                        baseline_error_details[name] = f"invalid cited evidence: {exc}"
-                        continue
-                    if any(validated.get(key) != truth.get(key) for key in
-                           ("value", "unit", "currency", "billing_period", "plan_name")):
-                        baseline_error_details[name] = "wrong value or plan context"
-                elif proposed.get("state") == "conflicting":
-                    candidates = proposed.get("candidates")
-                    if not isinstance(candidates, list) or len(candidates) < 2:
-                        baseline_error_details[name] = "conflict needs two cited candidates"
-                        continue
-                    try:
-                        validated = [validate_claim(manifest, name, {**item, "state": "verified"}, captures)
-                                     for item in candidates]
-                    except (ValueError, KeyError, TypeError) as exc:
-                        baseline_error_details[name] = f"invalid conflict evidence: {exc}"
-                        continue
-                    expected_candidates = truth.get("candidates", [])
-                    def signature(item):
-                        return (item.get("value"), item.get("unit"), item.get("currency"),
-                                item.get("billing_period"), item.get("plan_name"))
-                    if sorted(map(str, map(signature, validated))) != sorted(map(str, map(signature, expected_candidates))):
-                        baseline_error_details[name] = "wrong conflict candidates"
+            baseline_error_details = _score_human_row(manifest, expected, baseline["fields"])
             baseline_errors = len(baseline_error_details)
         else:
             baseline_errors = sum(any(baseline["fields"][name].get(key) != label.get(key)
                                       for key in ("state", "value", "unit", "currency", "source_url", "snapshot_hash", "excerpt"))
                                   for name, label in expected.items())
+    corrected_path = manifest_path.with_name("corrected_row.json")
+    corrected = None
+    corrected_errors = corrected_fields = None
+    corrected_error_details = None
+    if corrected_path.exists():
+        if not modern or assisted is None:
+            raise ValueError("Corrected final row requires modern labels and assisted review")
+        corrected = json.loads(corrected_path.read_text(encoding="utf-8"))
+        reviewer = corrected.get("reviewer_id")
+        session_reviewers = {item.get("reviewer_id") for item in assisted["review_sessions"]}
+        if (corrected.get("corrected_row_schema_version") != "1.0" or
+            corrected.get("site_id") != manifest["site_id"] or
+            corrected.get("source_job_id") != manifest.get("source_job_id") or
+            not reviewer or reviewer not in session_reviewers or
+            reviewer in {label_a.get("reviewer_id"), label_b.get("reviewer_id") if label_b else None} or
+            set(corrected.get("fields", {})) != set(expected)):
+            raise ValueError("Corrected final row needs the assisted reviewer, job and all fields")
+        corrected_error_details = _score_human_row(manifest, expected, corrected["fields"])
+        corrected_errors = len(corrected_error_details)
+        corrected_fields = len(expected)
     site = manifest["site_id"]
     return {"id": site, "site": site, "split": manifest["split"], "category": manifest["category"],
         "seed": manifest["seed"], "schema": manifest["schema"], "options": manifest["options"],
@@ -318,8 +357,12 @@ def load_labeled_case(manifest_path: Path, labels_path: Path) -> dict:
         "capture_date": manifest.get("capture_date"),
         "live_elapsed_seconds": manifest.get("live_elapsed_seconds"),
         "http_requests_started": manifest.get("http_requests_started"),
+        "access_policy_violations": manifest.get("access_policy_violations"),
         "manual_baseline_seconds": baseline_seconds, "manual_baseline_errors": baseline_errors,
         "manual_baseline_fields": baseline_fields, "manual_baseline": baseline,
         "manual_baseline_error_details": baseline_error_details,
+        "corrected_row": corrected, "corrected_row_errors": corrected_errors,
+        "corrected_row_fields": corrected_fields,
+        "corrected_row_error_details": corrected_error_details,
         "independent_labels": {
             "reviewer_a": label_a, "reviewer_b": label_b, "adjudication": adjudication}}

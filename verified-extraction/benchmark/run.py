@@ -179,11 +179,16 @@ def score(cases: list[dict]) -> dict:
         reviewed_row_correct = bool(case.get("plan_name")) and all(
             item["expected"]["state"] == "verified" and item["actual_state"] == "verified" and item["correct"]
             for item in fields.values())
+        verdicts = (case.get("assisted_reviews") or {}).get("reviews", {})
+        verdict_fields = sum(name in fields for name in verdicts)
+        verdict_errors = sum((review.get("verdict") == "correct") != bool(fields[name]["correct"])
+                             for name, review in verdicts.items() if name in fields)
         rows.append({"id": case["id"], "site": case["site"], "split": case["split"],
                      "category": case["category"], "latency_seconds": duration, "failure": failure,
                      "access_failure_codes": [item["code"] for item in result["errors"] if item["code"] in
                          {"ACCESS_DENIED", "ROBOTS_DENIED", "ROBOTS_UNAVAILABLE", "PRIVATE_TARGET", "OUT_OF_SCOPE"}]
                          if result else [],
+                     "access_policy_violations": case.get("access_policy_violations", []),
                      "fields": fields, "result_status": result["status"] if result else None,
                      "reviewed_row_correct": reviewed_row_correct,
                      "review_seconds": case.get("review_seconds"),
@@ -193,9 +198,15 @@ def score(cases: list[dict]) -> dict:
                      "manual_baseline_seconds": case.get("manual_baseline_seconds"),
                      "manual_baseline_errors": case.get("manual_baseline_errors"),
                      "manual_baseline_fields": case.get("manual_baseline_fields"),
+                     "corrected_row_errors": case.get("corrected_row_errors"),
+                     "corrected_row_fields": case.get("corrected_row_fields"),
+                     "corrected_row_error_details": case.get("corrected_row_error_details"),
+                     "reviewer_verdict_errors": verdict_errors if verdict_fields else None,
+                     "reviewer_verdict_fields": verdict_fields,
                      "plan_name": case.get("plan_name"), "code_revision": case.get("code_revision"),
                      "independent_labels": case.get("independent_labels"),
                      "manual_baseline": case.get("manual_baseline"),
+                     "corrected_row": case.get("corrected_row"),
                      "assisted_reviews": case.get("assisted_reviews"),
                      "estimated_internal_cost_usd": result["usage"].get("estimated_internal_cost_usd") if result else None,
                      "raw_result": result})
@@ -242,6 +253,8 @@ def summarize(rows: list[dict]) -> dict:
     review_seconds = 0.0
     reviewed_cases = 0
     baseline_cases = baseline_fields = baseline_errors = 0
+    corrected_cases = corrected_fields = corrected_errors = 0
+    verdict_fields = verdict_errors = 0
     baseline_seconds = live_seconds = 0.0
     live_cases = 0
     http_requests = 0
@@ -257,6 +270,12 @@ def summarize(rows: list[dict]) -> dict:
             baseline_seconds += row["manual_baseline_seconds"]
             baseline_fields += row["manual_baseline_fields"]
             baseline_errors += row["manual_baseline_errors"]
+        if row.get("corrected_row_errors") is not None:
+            corrected_cases += 1
+            corrected_fields += row["corrected_row_fields"]
+            corrected_errors += row["corrected_row_errors"]
+        verdict_fields += row.get("reviewer_verdict_fields", 0)
+        verdict_errors += row.get("reviewer_verdict_errors") or 0
         if row.get("live_elapsed_seconds") is not None:
             live_cases += 1
             live_seconds += row["live_elapsed_seconds"]
@@ -304,6 +323,12 @@ def summarize(rows: list[dict]) -> dict:
         "manual_baseline_minutes_per_site": ratio(baseline_seconds / 60, baseline_cases),
         "manual_baseline_error_rate": ratio(baseline_errors, baseline_fields),
         "manual_baseline_errors": baseline_errors, "manual_baseline_fields": baseline_fields,
+        "corrected_row_cases": corrected_cases,
+        "corrected_row_errors": corrected_errors, "corrected_row_fields": corrected_fields,
+        "corrected_row_error_rate": ratio(corrected_errors, corrected_fields),
+        "reviewer_verdict_errors": verdict_errors,
+        "reviewer_verdict_fields": verdict_fields,
+        "reviewer_verdict_error_rate": ratio(verdict_errors, verdict_fields),
         "paired_review_cases": paired_cases,
         "paired_assisted_time_reduction": ratio(paired_baseline_seconds - paired_assisted_seconds,
                                                  paired_baseline_seconds),

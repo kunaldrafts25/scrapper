@@ -36,6 +36,9 @@ def test_frozen_bundle_requires_independent_source_labels():
                                 "development", "static", "Test Plan", "synthetic fixture authored locally")
         template = json.loads((bundle / "labels.template.json").read_text(encoding="utf-8"))
         assert "machine_result" not in template
+        corrected_template = json.loads((bundle / "corrected_row.template.json").read_text(encoding="utf-8"))
+        assert corrected_template["source_job_id"] == result.job_id
+        assert set(corrected_template["fields"]) == set(template["fields"])
         labels_path = bundle / "labels.json"
         labels_path.write_text(json.dumps(template), encoding="utf-8")
         with pytest.raises(ValueError, match="Blind labels"):

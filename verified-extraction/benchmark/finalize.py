@@ -38,8 +38,10 @@ def finalize(cases: list[dict], scored: dict, inventory: list[dict], agreement: 
         if (case.get("live_elapsed_seconds") is None or case.get("http_requests_started") is None or
             case.get("manual_baseline_seconds") is None or case.get("review_seconds") is None or
             case.get("manual_baseline_errors") is None or not case.get("assisted_reviews") or
+            case.get("corrected_row_errors") is None or not case.get("corrected_row") or
             not case.get("independent_labels") or not case.get("code_revision") or
-            not case.get("capture_date") or case.get("blind_label_seconds") is None):
+            not case.get("capture_date") or case.get("blind_label_seconds") is None or
+            not isinstance(case.get("access_policy_violations"), list)):
             raise ValueError(f"Site {case['site']} lacks live, blind, review or baseline measurements")
         if case["split"] == "held_out":
             labels = case["independent_labels"]
@@ -80,7 +82,9 @@ def finalize(cases: list[dict], scored: dict, inventory: list[dict], agreement: 
             assisted_verdict_errors += sum(
                 (review.get("verdict") == "correct") != bool(row["fields"][name]["correct"])
                 for name, review in reviews.items())
-    denominator = sum(bool(row.get("reviewed_row_correct")) for row in scored["per_case"])
+    denominator = sum(case["corrected_row_errors"] == 0 and
+                      all(field.get("state") == "verified" for field in case["corrected_row"]["fields"].values())
+                      for case in cases)
     labor_seconds = sum(case["review_seconds"] + case["blind_label_seconds"] +
                         case["manual_baseline_seconds"] for case in cases)
     labor_usd = labor_seconds / 3600 * rate
@@ -89,6 +93,11 @@ def finalize(cases: list[dict], scored: dict, inventory: list[dict], agreement: 
     total_usd = labor_usd + compute_usd + provider_usd
     cost_per_row = round(total_usd / denominator, 4) if denominator else None
     d = metrics["denominators"]
+    robots_scope_stops = [(row["site"], code) for row in scored["per_case"]
+                          for code in row.get("access_failure_codes", [])
+                          if code in {"ROBOTS_DENIED", "ROBOTS_UNAVAILABLE", "OUT_OF_SCOPE"}]
+    reported_violations = [(case["site"], violation) for case in cases
+                           for violation in case.get("access_policy_violations", [])]
     critical_names = {"named_plan", "listed_price", "currency", "billing_period"}
     critical_wrong = [(row["site"], name) for row in held for name, field in row["fields"].items()
                       if name in critical_names and field["actual_state"] == "verified" and not field["correct"]]
@@ -100,7 +109,9 @@ def finalize(cases: list[dict], scored: dict, inventory: list[dict], agreement: 
         "recall": metrics["field_recall"] is not None and metrics["field_recall"] >= .50,
         "review_time": metrics["paired_assisted_time_reduction"] is not None and
                        metrics["paired_assisted_time_reduction"] >= .25,
-        "review_error": assisted_verdict_errors <= sum(row["manual_baseline_errors"] for row in held),
+        "review_error": sum(row["corrected_row_errors"] for row in held) <=
+                        sum(row["manual_baseline_errors"] for row in held),
+        "robots_scope_policy": not robots_scope_stops and not reported_violations,
         "access_failures": d["access_failures"] <= 2,
         "request_bounds": all(row["http_requests_started"] <= int(by_site[row["site"]]["max_http_requests"])
                               for row in cases),
@@ -109,6 +120,13 @@ def finalize(cases: list[dict], scored: dict, inventory: list[dict], agreement: 
     return {"status": "finalized", "decision": "go" if all(checks.values()) else "no-go",
             "checks": checks, "critical_wrong_accepted": critical_wrong,
             "assisted_verdict_errors": assisted_verdict_errors,
+            "assisted_verdict_fields": sum(len(row["fields"]) for row in held),
+            "assisted_verdict_error_rate": round(assisted_verdict_errors / sum(len(row["fields"]) for row in held), 4),
+            "corrected_row_errors": sum(row["corrected_row_errors"] for row in held),
+            "corrected_row_fields": sum(row["corrected_row_fields"] for row in held),
+            "corrected_row_error_rate": metrics["corrected_row_error_rate"],
+            "robots_scope_stops": robots_scope_stops,
+            "reported_policy_violations": reported_violations,
             "cost": {"labor_usd": round(labor_usd, 4), "compute_usd": round(compute_usd, 4),
                      "provider_usd": round(provider_usd, 4), "total_usd": round(total_usd, 4),
                      "correct_reviewed_rows": denominator, "usd_per_correct_reviewed_row": cost_per_row},

@@ -116,6 +116,64 @@ def test_manual_baseline_rejects_same_price_from_wrong_plan():
         _cleanup(folder)
 
 
+def test_hidden_only_value_cannot_support_independent_label():
+    folder, manifest, labels = _bundle()
+    try:
+        html = "<article><h3>Team</h3><p>Support: Email <span hidden>Phone</span></p></article>"
+        raw = html.encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        manifest["pages"][URL]["raw_base64"] = base64.b64encode(raw).decode()
+        manifest["pages"][URL]["snapshot_hash"] = digest
+        soup = BeautifulSoup(html, "html.parser")
+        article = soup.article
+        labels["fields"]["listed_price"] = {"state": "missing", "value": None,
+            "plan_name": "Team", "evidence": [], "reviewer_time_seconds": 1}
+        labels["fields"]["support_channel"] = {"state": "verified", "value": "Phone",
+            "plan_name": "Team", "judgment": "explicit", "reviewer_time_seconds": 1,
+            "evidence": [{"source_url": URL, "snapshot_hash": digest, "fetched_at": FETCHED,
+                "scope_locator": dom_path(article), "relation": "same_scope", "raw_value": "Phone",
+                "nodes": [{"role": "plan", "locator": dom_path(soup.h3), "excerpt": "Team"},
+                          {"role": "value", "locator": dom_path(soup.p),
+                           "excerpt": "Support: Email"}]}]}
+        (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (folder / "labels.json").write_text(json.dumps(labels), encoding="utf-8")
+        import pytest
+        with pytest.raises(ValueError, match="raw value is absent"):
+            load_labeled_case(folder / "manifest.json", folder / "labels.json")
+    finally:
+        _cleanup(folder)
+
+
+def test_corrected_final_row_scores_source_backed_fields_separately():
+    folder, manifest, _ = _bundle()
+    try:
+        manifest["source_job_id"] = "job-1"
+        (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        assisted = {"label_schema_version": "1.1", "job_id": "job-1",
+            "reviews": {"listed_price": {"verdict": "wrong"}},
+            "review_sessions": [{"field_name": "listed_price", "reviewer_id": "assisted-a",
+                                 "started_at": 1, "stopped_at": 11, "elapsed_seconds": 10}]}
+        (folder / "assisted_reviews.json").write_text(json.dumps(assisted), encoding="utf-8")
+        corrected = {"corrected_row_schema_version": "1.0", "site_id": "pricing-example",
+            "source_job_id": "job-1", "reviewer_id": "assisted-a",
+            "fields": _baseline(_source(0, 1, "20 per month"))["fields"]}
+        path = folder / "corrected_row.json"
+        path.write_text(json.dumps(corrected), encoding="utf-8")
+        case = load_labeled_case(folder / "manifest.json", folder / "labels.json")
+        assert case["corrected_row_errors"] == 0
+        metrics = score([case])["summary"]
+        assert metrics["customer_task_recall"] == 0
+        assert metrics["corrected_row_error_rate"] == 0
+        assert metrics["reviewer_verdict_error_rate"] == 0
+        corrected["fields"]["listed_price"]["evidence"] = [_source(1, 0, "$20/month")]
+        path.write_text(json.dumps(corrected), encoding="utf-8")
+        case = load_labeled_case(folder / "manifest.json", folder / "labels.json")
+        assert case["corrected_row_errors"] == 1
+        assert score([case])["summary"]["corrected_row_error_rate"] == .3333
+    finally:
+        _cleanup(folder)
+
+
 def test_held_out_keeps_two_blind_labels_and_adjudication():
     folder, manifest, first = _bundle()
     try:

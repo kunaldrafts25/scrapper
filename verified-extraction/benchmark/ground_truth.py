@@ -7,7 +7,7 @@ import re
 from decimal import Decimal, InvalidOperation
 
 from bs4 import BeautifulSoup
-from bs4.element import Tag
+from bs4.element import NavigableString, Tag
 
 from verified_extraction.extract import dom_path, is_hidden
 from verified_extraction.fetch import decode_html
@@ -15,6 +15,14 @@ from verified_extraction.fetch import decode_html
 
 def normalized(value: str) -> str:
     return " ".join(str(value).split())
+
+
+def visible_text(node: Tag) -> str:
+    """Read only rendered text; a visible parent cannot launder hidden descendants."""
+    return normalized(" ".join(str(child) for child in node.descendants
+                           if isinstance(child, NavigableString) and
+                           isinstance(child.parent, Tag) and not is_hidden(child.parent) and
+                           not child.find_parent(["script", "style", "template"])))
 
 
 def _node(soup: BeautifulSoup, locator: str) -> Tag:
@@ -111,7 +119,7 @@ def validate_claim(manifest: dict, field_name: str, item: dict, captures: dict) 
             node = _node(soup, cited.get("locator", ""))
             if node is not scope and all(parent is not scope for parent in node.parents):
                 raise ValueError(f"Field {field_name} node lies outside its cited scope")
-            excerpt = normalized(node.get_text(" ", strip=True))
+            excerpt = visible_text(node)
             if excerpt != normalized(cited.get("excerpt", "")):
                 raise ValueError(f"Field {field_name} source-node excerpt changed")
             roles.setdefault(role, []).append(node)
@@ -119,10 +127,10 @@ def validate_claim(manifest: dict, field_name: str, item: dict, captures: dict) 
             raise ValueError(f"Field {field_name} needs plan and value nodes")
         plan_node, value_node = roles["plan"][0], roles["value"][0]
         if not re.search(r"(?<!\w)" + re.escape(plan) + r"(?!\w)",
-                         normalized(plan_node.get_text(" ", strip=True)), re.I):
+                         visible_text(plan_node), re.I):
             raise ValueError(f"Field {field_name} cites a different plan")
         raw_value = source.get("raw_value")
-        value_text = normalized(value_node.get_text(" ", strip=True))
+        value_text = visible_text(value_node)
         if not isinstance(raw_value, str) or not re.search(r"(?<!\d)" + re.escape(raw_value) + r"(?!\d)", value_text):
             raise ValueError(f"Field {field_name} raw value is absent from its value node")
         relation = source.get("relation", "same_scope")
@@ -138,7 +146,7 @@ def validate_claim(manifest: dict, field_name: str, item: dict, captures: dict) 
                _table_column(plan_node, scope) != _table_column(value_node, scope):
                 raise ValueError(f"Field {field_name} plan and value are not in one table column")
         elif relation == "shared_all_plans":
-            qualifier = " ".join(normalized(node.get_text(" ", strip=True)).casefold()
+            qualifier = " ".join(visible_text(node).casefold()
                                  for node in roles.get("qualifier", []))
             if not re.search(r"\b(all|every) plans\b", qualifier):
                 raise ValueError(f"Field {field_name} lacks an all-plans statement")
@@ -146,7 +154,7 @@ def validate_claim(manifest: dict, field_name: str, item: dict, captures: dict) 
             raise ValueError(f"Field {field_name} has an unsupported plan relation")
         if not _value_supported(raw_value, item.get("value"), properties[field_name]["type"]):
             raise ValueError(f"Field {field_name} value is unsupported by its source node")
-        context = " ".join(normalized(node.get_text(" ", strip=True)) for group in roles.values() for node in group)
+        context = " ".join(visible_text(node) for group in roles.values() for node in group)
         unit = item.get("unit")
         period = item.get("billing_period")
         if unit and unit.casefold() not in context.casefold() and not \
