@@ -1,0 +1,9 @@
+.venv/
+data/
+*.db
+*.db-*
+__pycache__/
+.pytest_cache/
+pytest-cache-files-*/
+.tmp/
+writeprobe.txt
