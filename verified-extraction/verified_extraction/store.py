@@ -30,6 +30,9 @@ class Store:
                 pages_fetched INTEGER NOT NULL DEFAULT 0, verified_fields INTEGER NOT NULL DEFAULT 0,
                 conflicting_fields INTEGER NOT NULL DEFAULT 0, missing_fields INTEGER NOT NULL DEFAULT 0,
                 blocked_fields INTEGER NOT NULL DEFAULT 0, unverified_fields INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS reviews(tenant TEXT NOT NULL, job_id TEXT NOT NULL,
+                field_name TEXT NOT NULL, review_json TEXT NOT NULL, updated_at TEXT NOT NULL,
+                PRIMARY KEY(tenant,job_id,field_name));
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(snapshots)")}
             for column, definition in (("raw", "BLOB"), ("encoding", "TEXT"), ("decoding_errors", "INTEGER")):
@@ -126,6 +129,20 @@ class Store:
         values = row or (0,) * 7
         return dict(zip(("jobs", "pages_fetched", "verified_fields", "conflicting_fields", "missing_fields", "blocked_fields", "unverified_fields"), values), tenant_id=tenant)
 
+    def save_review(self, tenant: str, job_id: str, field_name: str, review: dict):
+        timestamp = datetime.now(timezone.utc).isoformat()
+        with self._db() as db:
+            db.execute("""INSERT INTO reviews VALUES(?,?,?,?,?) ON CONFLICT(tenant,job_id,field_name)
+                DO UPDATE SET review_json=excluded.review_json,updated_at=excluded.updated_at""",
+                (tenant, job_id, field_name, json.dumps(review), timestamp))
+        return {**review, "updated_at": timestamp}
+
+    def reviews(self, tenant: str, job_id: str) -> dict:
+        with self._db() as db:
+            rows = db.execute("SELECT field_name,review_json,updated_at FROM reviews WHERE tenant=? AND job_id=?",
+                              (tenant, job_id)).fetchall()
+        return {name: {**json.loads(body), "updated_at": timestamp} for name, body, timestamp in rows}
+
     def get(self, tenant: str, job_id: str):
         self.purge_expired()
         with self._db() as db:
@@ -145,6 +162,7 @@ class Store:
 
     def delete(self, tenant: str, job_id: str):
         with self._db() as db:
+            db.execute("DELETE FROM reviews WHERE tenant=? AND job_id=?", (tenant, job_id))
             db.execute("DELETE FROM claims WHERE tenant=? AND idem IN (SELECT idem FROM jobs WHERE tenant=? AND id=?)",
                        (tenant, tenant, job_id))
             db.execute("DELETE FROM snapshots WHERE tenant=? AND job_id=?", (tenant, job_id))
@@ -153,6 +171,7 @@ class Store:
     def purge_expired(self):
         cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         with self._db() as db:
+            db.execute("DELETE FROM reviews WHERE (tenant,job_id) IN (SELECT tenant,id FROM jobs WHERE created_at < ?)", (cutoff,))
             db.execute("DELETE FROM snapshots WHERE (tenant,job_id) IN (SELECT tenant,id FROM jobs WHERE created_at < ?)", (cutoff,))
             db.execute("DELETE FROM jobs WHERE created_at < ?", (cutoff,))
             db.execute("DELETE FROM claims WHERE created_at < ?", (cutoff,))

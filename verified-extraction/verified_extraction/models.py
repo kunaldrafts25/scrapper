@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+import re
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -35,7 +36,7 @@ class JobRequest(BaseModel):
                 or len(required) != len(set(required)) or not set(required) <= set(props)):
             raise ValueError("required must be a list of unique property names")
         for name, spec in props.items():
-            if not isinstance(name, str) or not name or len(name) > 80 or not isinstance(spec, dict):
+            if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,79}", name) or not isinstance(spec, dict):
                 raise ValueError("invalid property")
             if not isinstance(spec.get("type"), str) or spec["type"] not in {"string", "number", "integer", "boolean"}:
                 raise ValueError("only scalar properties are supported")
@@ -102,3 +103,13 @@ class Result(BaseModel):
     pages: list[dict[str, Any]]
     errors: list[dict[str, Any]]
     usage: dict[str, Any]
+
+
+class ReviewInput(BaseModel):
+    verdict: Literal["correct", "wrong", "unsupported", "conflicting", "uncertain"]
+    corrected_value: str | None = Field(default=None, max_length=300)
+    corrected_source_url: str | None = Field(default=None, max_length=2000)
+    corrected_excerpt: str | None = Field(default=None, max_length=1000)
+    reason: str = Field(default="", max_length=500)
+    time_spent_seconds: float = Field(ge=0, le=36000)
+    reviewer_id: str | None = Field(default=None, max_length=80)

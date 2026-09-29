@@ -202,6 +202,13 @@ def verify_candidate(candidate: Candidate, source: Page | bytes | str) -> bool:
             and candidate.numeric_encoding == numeric_encoding(candidate.value, candidate.value_type))
 
 
+def source_node_for(html: str, locator: str) -> str | None:
+    path = locator.split("::", 1)[0]
+    soup = BeautifulSoup(html, "html.parser")
+    tag = next((item for item in soup.find_all(True) if dom_path(item) == path), None)
+    return str(tag)[:4000] if tag is not None else None
+
+
 def extract_fields(pages: list[Page], properties: dict, blocked: bool) -> dict[str, FieldResult]:
     output = {}
     for name, spec in properties.items():

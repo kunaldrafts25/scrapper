@@ -11,9 +11,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.responses import JSONResponse
 
-from .models import JobRequest
+from .models import JobRequest, ReviewInput
 from .security import FetchError
 from .worker import run_hard
+from .extract import source_node_for
 from .store import Store
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -112,9 +113,10 @@ def review_app():
     document = """<!doctype html><html><head><meta charset='utf-8'><title>Evidence review</title></head>
 <body><h1>Evidence review</h1><form id='form'><label>Job ID <input id='job' required></label>
 <label>Bearer key <input id='key' type='password' required autocomplete='off'></label>
-<button>Load</button></form><div id='result'></div>
+<button>Load</button></form><button id='export' type='button' disabled>Download labels</button><div id='result'></div>
 <script nonce='NONCE'>
-const form=document.getElementById('form'), out=document.getElementById('result');
+const form=document.getElementById('form'), out=document.getElementById('result'), exportButton=document.getElementById('export');
+let activeId='', activeHeaders=null;
 function add(parent,tag,value){const node=document.createElement(tag);node.textContent=value;parent.append(node);return node;}
 form.addEventListener('submit',async event=>{event.preventDefault();out.replaceChildren();
  const id=document.getElementById('job').value.trim(), key=document.getElementById('key').value;
@@ -123,14 +125,53 @@ form.addEventListener('submit',async event=>{event.preventDefault();out.replaceC
  const response=await fetch('/v1/jobs/'+id,{headers,cache:'no-store'});
  if(!response.ok){add(out,'p','Could not load job ('+response.status+')');return;}
  const job=await response.json();
+ activeId=id;activeHeaders=headers;exportButton.disabled=false;
+ const reviewResponse=await fetch('/v1/jobs/'+id+'/reviews',{headers,cache:'no-store'});
+ const saved=reviewResponse.ok?await reviewResponse.json():{};
+ const evidenceResponse=await fetch('/v1/jobs/'+id+'/review-evidence',{headers,cache:'no-store'});
+ const evidenceMap=evidenceResponse.ok?await evidenceResponse.json():{};
  for(const [name,field] of Object.entries(job.fields)){
-  const section=add(out,'section','');add(section,'h2',name+' — '+field.state);
+  const section=add(out,'section','');const started=performance.now();add(section,'h2',name+' — '+field.state);
   add(section,'p','Value: '+JSON.stringify(field.value)+(field.unit?' / '+field.unit:'')+(field.currency?' '+field.currency:''));
-  const evidence=[...field.evidence,...field.candidates.map(c=>c.evidence)];
+  const evidence=evidenceMap[name]||[];
   for(const item of evidence){add(section,'h3',item.source_url+' '+item.locator);add(section,'blockquote',item.excerpt);
+   if(item.source_node){add(section,'p','Source node:');add(section,'mark',item.source_node);}
+   if(!item.source_bound){add(section,'p','Source binding could not be checked');continue;}
    const capture=await fetch('/v1/jobs/'+id+'/snapshots/'+item.snapshot_hash,{headers,cache:'no-store'});
-   add(section,'pre',capture.ok?await capture.text():'Capture unavailable');}
+   const pre=add(section,'pre','');
+   if(!capture.ok){pre.textContent='Capture unavailable';continue;}
+   const raw=await capture.text(), position=item.source_node?raw.indexOf(item.source_node):-1;
+   if(position>=0){pre.append(document.createTextNode(raw.slice(0,position)));
+    add(pre,'mark',item.source_node);pre.append(document.createTextNode(raw.slice(position+item.source_node.length)));}
+   else pre.textContent=raw;}
+  const verdict=section.appendChild(document.createElement('select'));
+  for(const choice of ['','correct','wrong','unsupported','conflicting','uncertain']){
+   const option=document.createElement('option');option.value=choice;option.textContent=choice||'Choose verdict';verdict.append(option);}
+  verdict.value=saved[name]?.verdict||'';
+  const corrected=section.appendChild(document.createElement('input'));corrected.placeholder='Corrected value (optional)';corrected.value=saved[name]?.corrected_value||'';
+  const source=section.appendChild(document.createElement('input'));source.placeholder='Corrected source URL (optional)';source.value=saved[name]?.corrected_source_url||'';
+  const excerpt=section.appendChild(document.createElement('input'));excerpt.placeholder='Supporting excerpt (optional)';excerpt.value=saved[name]?.corrected_excerpt||'';
+  const reason=section.appendChild(document.createElement('textarea'));reason.placeholder='Short reason';reason.value=saved[name]?.reason||'';
+  const seconds=section.appendChild(document.createElement('input'));seconds.type='number';seconds.min='0';seconds.step='0.1';seconds.placeholder='Seconds spent (auto if blank)';
+  if(saved[name])seconds.value=saved[name].time_spent_seconds;
+  const save=add(section,'button','Save verdict'), status=add(section,'p','');save.type='button';
+  save.addEventListener('click',async()=>{
+   if(!verdict.value){status.textContent='Choose a verdict';return;}
+   const spent=seconds.value===''?Math.round((performance.now()-started)/100)/10:Number(seconds.value);
+   const body={verdict:verdict.value,corrected_value:corrected.value||null,corrected_source_url:source.value||null,
+    corrected_excerpt:excerpt.value||null,reason:reason.value,time_spent_seconds:spent};
+   const response=await fetch('/v1/jobs/'+id+'/reviews/'+encodeURIComponent(name),{method:'PUT',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(body)});
+   status.textContent=response.ok?'Saved':'Save failed ('+response.status+')';if(response.ok)seconds.value=spent;
+  });
  }
+});
+exportButton.addEventListener('click',async()=>{
+ if(!activeId||!activeHeaders)return;
+ const response=await fetch('/v1/jobs/'+activeId+'/labels',{headers:activeHeaders,cache:'no-store'});
+ if(!response.ok){add(out,'p','Export failed ('+response.status+')');return;}
+ const data=await response.json(), blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+ const link=document.createElement('a'), objectUrl=URL.createObjectURL(blob);
+ link.href=objectUrl;link.download='verified-extraction-labels.json';link.click();setTimeout(()=>URL.revokeObjectURL(objectUrl),1000);
 });
 </script></body></html>""".replace("NONCE", nonce)
     return HTMLResponse(document, headers={"Content-Security-Policy": f"default-src 'none'; script-src 'nonce-{nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'",
@@ -171,3 +212,54 @@ def delete_job(job_id: str, tenant_id: str = Depends(tenant)):
 @app.get("/v1/metrics")
 def metrics(tenant_id: str = Depends(tenant)):
     return store.metrics(tenant_id)
+
+
+@app.put("/v1/jobs/{job_id}/reviews/{field_name}")
+def put_review(job_id: str, field_name: str, review: ReviewInput, tenant_id: str = Depends(tenant)):
+    result = store.get(tenant_id, job_id)
+    if result is None or field_name not in result["fields"]:
+        raise HTTPException(404, detail={"code": "NOT_FOUND"})
+    return store.save_review(tenant_id, job_id, field_name, review.model_dump())
+
+
+@app.get("/v1/jobs/{job_id}/reviews")
+def get_reviews(job_id: str, tenant_id: str = Depends(tenant)):
+    if store.get(tenant_id, job_id) is None:
+        raise HTTPException(404, detail={"code": "NOT_FOUND"})
+    return store.reviews(tenant_id, job_id)
+
+
+@app.get("/v1/jobs/{job_id}/labels")
+def export_labels(job_id: str, tenant_id: str = Depends(tenant)):
+    result = store.get(tenant_id, job_id)
+    if result is None:
+        raise HTTPException(404, detail={"code": "NOT_FOUND"})
+    reviews = store.reviews(tenant_id, job_id)
+    accepted = sum(result["fields"][name]["state"] == "verified" and item["verdict"] == "correct"
+                   for name, item in reviews.items())
+    minutes = sum(item["time_spent_seconds"] for item in reviews.values()) / 60
+    return {"label_schema_version": "1.0", "job_id": job_id, "requested_url": result["requested_url"],
+            "machine_schema_version": result["schema_version"], "extraction_version": result["extraction_version"],
+            "machine_result": result, "reviews": reviews, "reviewed_fields": len(reviews),
+            "review_minutes_total": round(minutes, 4), "review_minutes_per_accepted_field":
+                round(minutes / accepted, 4) if accepted else None,
+            "capture_hashes": [page["snapshot_hash"] for page in result["pages"] if "snapshot_hash" in page]}
+
+
+@app.get("/v1/jobs/{job_id}/review-evidence")
+def review_evidence(job_id: str, tenant_id: str = Depends(tenant)):
+    result = store.get(tenant_id, job_id)
+    if result is None:
+        raise HTTPException(404, detail={"code": "NOT_FOUND"})
+    output = {}
+    for name, field in result["fields"].items():
+        evidence = field["evidence"] + [candidate["evidence"] for candidate in field["candidates"]]
+        rows = []
+        for item in evidence:
+            bound = any(page.get("url") == item["source_url"] and page.get("fetched_at") == item["fetched_at"]
+                        and page.get("snapshot_hash") == item["snapshot_hash"] for page in result["pages"])
+            capture = store.snapshot(tenant_id, job_id, item["snapshot_hash"]) if bound else None
+            rows.append({**item, "source_node": source_node_for(capture, item["locator"]) if capture else None,
+                         "source_bound": bool(bound and capture is not None)})
+        output[name] = rows
+    return output
