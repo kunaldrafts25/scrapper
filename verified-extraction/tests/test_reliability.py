@@ -1,4 +1,7 @@
 import os
+import json
+import subprocess
+import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -109,3 +112,65 @@ def test_pacing_reservations_coordinate_separate_instances():
     assert max(waits) >= 1.0
     assert b.reserve("other.example", 0.5) < 0.2
     path.unlink()
+
+
+def test_cross_process_host_requests_do_not_overlap_and_space_actual_starts():
+    path = Path(f"test-pacing-{uuid.uuid4().hex}.db")
+    files = []
+    try:
+        _check_cross_process_pacing(path, files)
+    finally:
+        for file in files:
+            file.unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
+
+
+def _check_cross_process_pacing(path, files):
+    worker = ("import json,sys,time; from verified_extraction.pacing import HostPacer; "
+              "p=HostPacer(sys.argv[1])\n"
+              "with p.request('example.com',float(sys.argv[3]),time.monotonic()+6) as started:\n"
+              "  begin=started(); time.sleep(float(sys.argv[4])); end=time.time(); "
+              "  open(sys.argv[2],'w').write(json.dumps({'start':begin,'finish':end}))")
+    def pair(hold, delay):
+        pair_files = [Path(f"test-pacing-{uuid.uuid4().hex}.json") for _ in range(2)]
+        files.extend(pair_files)
+        processes = [subprocess.Popen([sys.executable, "-c", worker, str(path), str(file),
+                         str(delay), str(hold)]) for file in pair_files]
+        for process in processes:
+            assert process.wait(timeout=8) == 0
+        first, second = sorted((json.loads(file.read_text()) for file in pair_files), key=lambda row: row["start"])
+        assert second["start"] >= first["finish"] - 0.005
+        assert second["start"] - first["start"] >= delay - 0.02
+    pair(0.35, 0.2)
+    pair(0.04, 0.3)
+
+
+def test_dead_worker_host_lease_recovers():
+    path = Path(f"test-pacing-{uuid.uuid4().hex}.db")
+    try:
+        _check_dead_worker_recovery(path)
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _check_dead_worker_recovery(path):
+    worker = ("import sys,time; from verified_extraction.pacing import HostPacer; "
+              "HostPacer.LEASE_SECONDS=.5; p=HostPacer(sys.argv[1])\n"
+              "with p.request('example.com',.1,time.monotonic()+5) as started:\n"
+              "  started(); print('READY',flush=True); time.sleep(10)")
+    process = subprocess.Popen([sys.executable, "-c", worker, str(path)], stdout=subprocess.PIPE)
+    try:
+        assert process.stdout.readline().strip() == b"READY"
+        process.kill()
+        process.wait(timeout=3)
+        pacer = HostPacer(str(path))
+        pacer.LEASE_SECONDS = 0.5
+        before = time.monotonic()
+        with pacer.request("example.com", 0.1, before + 3) as started:
+            started()
+        elapsed = time.monotonic() - before
+        assert 0.2 <= elapsed < 2
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=3)

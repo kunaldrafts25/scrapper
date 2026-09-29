@@ -102,20 +102,14 @@ class HTTPFetcher:
         with self._locks_guard:
             lock = self._host_locks.setdefault(p.hostname, threading.Lock())
         with lock:
-            return self._request_locked(url, p)
+            parser = self.robots.get(self._robots_key(url))
+            crawl_delay = parser.crawl_delay(USER_AGENT) if parser else None
+            with self.pacer.request(p.hostname, float(crawl_delay or 0), self.deadline) as mark_started:
+                return self._request_locked(url, p, mark_started)
 
-    def _request_locked(self, url: str, p) -> tuple[int, dict[str, str], bytes]:
+    def _request_locked(self, url: str, p, mark_started) -> tuple[int, dict[str, str], bytes]:
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
-            raise FetchError("DEADLINE", "Job deadline reached")
-        parser = self.robots.get(self._robots_key(url))
-        crawl_delay = parser.crawl_delay(USER_AGENT) if parser else None
-        wait = self.pacer.reserve(p.hostname, float(crawl_delay or 0))
-        if wait > 0:
-            if wait >= self.deadline - time.monotonic():
-                raise FetchError("DEADLINE", "Job deadline reached")
-            time.sleep(wait)
-        if time.monotonic() >= self.deadline:
             raise FetchError("DEADLINE", "Job deadline reached")
         port = p.port or (443 if p.scheme == "https" else 80)
         ip = resolve_public(p.hostname, port)
@@ -125,6 +119,7 @@ class HTTPFetcher:
             raise FetchError("DEADLINE", "Job deadline reached")
         conn = conn_type(p.hostname, ip, port, min(8.0, remaining))
         try:
+            mark_started()
             conn.request("GET", p.path + ("?" + p.query if p.query else ""),
                          headers={"Host": p.netloc, "User-Agent": USER_AGENT, "Accept": "text/html,text/plain;q=0.8", "Connection": "close"})
             response = conn.getresponse()
