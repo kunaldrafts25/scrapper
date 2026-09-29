@@ -11,7 +11,8 @@ def test_large_integer_is_exact():
     page = Page("https://example.com/", "<p>Usage limit: 9007199254740993</p>", "now", [])
     field = extract_fields([page], {"usage_limit": {"type": "integer"}}, False)["usage_limit"]
     assert field.state == "verified"
-    assert field.value == 9007199254740993
+    assert field.value == "9007199254740993"
+    assert field.numeric_encoding == "integer-string"
 
 
 def test_identical_bytes_keep_both_source_urls():
@@ -37,3 +38,15 @@ def test_legacy_bytes_require_encoding_bearing_capture():
     assert verify_candidate(candidate, page)
     with pytest.raises(TypeError, match="Page"):
         verify_candidate(candidate, raw)
+
+
+def test_decimal_and_jsonld_precision_are_exact():
+    page = Page("https://example.com/", "<p>Plan price: $0.10000000000000000001/month</p>"
+        '<script type="application/ld+json">{"usage_limit":9007199254740993}</script>', "now", [])
+    properties = {"plan_price": {"type": "number"}, "usage_limit": {"type": "integer"}}
+    fields = extract_fields([page], properties, False)
+    assert fields["plan_price"].value == "0.10000000000000000001"
+    assert fields["plan_price"].numeric_encoding == "decimal-string"
+    assert fields["usage_limit"].value == "9007199254740993"
+    assert fields["usage_limit"].numeric_encoding == "integer-string"
+    assert all(verify_candidate(c, page) for name in properties for c in candidates_for(page, name, properties[name]))

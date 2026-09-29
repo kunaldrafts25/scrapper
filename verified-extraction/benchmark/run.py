@@ -78,17 +78,22 @@ def load_cases(suite: str) -> tuple[str, list[dict]]:
     return data["fixture_version"], cases
 
 
-def evidence_checks(field: dict, kind: str, captures: dict[str, Page]) -> list[bool]:
+def evidence_checks(field: dict, kind: str, captures: dict[str, Page], page_rows: list[dict]) -> list[bool]:
     candidates = field["candidates"] if field["state"] == "conflicting" else [
         {"value": field["value"], "unit": field.get("unit"), "currency": field.get("currency"),
+         "numeric_encoding": field.get("numeric_encoding"),
          "evidence": ev} for ev in field["evidence"]] if field["state"] == "verified" else []
     checks = []
     for item in candidates:
         ev = Evidence.model_validate(item["evidence"])
-        source = captures.get(ev.snapshot_hash)
+        capture = captures.get(ev.snapshot_hash)
+        bound = next((row for row in page_rows if row.get("url") == ev.source_url and
+                      row.get("fetched_at") == ev.fetched_at and row.get("snapshot_hash") == ev.snapshot_hash), None)
+        source = (Page(ev.source_url, capture.html, ev.fetched_at, [], capture.raw,
+                       capture.encoding, capture.decoding_errors) if capture and bound else None)
         candidate = Candidate(value=item["value"], unit=item.get("unit"), currency=item.get("currency"),
-                              value_type=kind, evidence=ev)
-        checks.append(source is not None and source.url == ev.source_url and verify_candidate(candidate, source))
+                              value_type=kind, numeric_encoding=item.get("numeric_encoding"), evidence=ev)
+        checks.append(source is not None and verify_candidate(candidate, source))
     return checks
 
 
@@ -106,7 +111,7 @@ def score(cases: list[dict]) -> dict:
         if result:
             for name, expected in case["expected"].items():
                 actual = result["fields"][name]
-                checks = evidence_checks(actual, SCHEMA["properties"][name]["type"], captures)
+                checks = evidence_checks(actual, SCHEMA["properties"][name]["type"], captures, result["pages"])
                 accepted = actual["state"] == "verified"
                 evidence_valid = bool(checks) and all(checks) if actual["state"] in {"verified", "conflicting"} else None
                 expected_value = expected.get("value")

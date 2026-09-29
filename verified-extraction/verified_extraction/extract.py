@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from decimal import Decimal, InvalidOperation
 from urllib.parse import urljoin, urlsplit
 from bs4 import BeautifulSoup
 from bs4.element import Tag, NavigableString
@@ -69,6 +70,7 @@ NUMBER = re.compile(r"^\s*(?P<currency>USD|EUR|GBP|INR|[$\u20ac\u00a3\u20b9])?\s
                     r"(?P<unit>(?:/\s*|per\s+)?(?:month|year|day|user|seat|GB)|monthly|annually)?\s*"
                     r"(?P<suffix>USD|EUR|GBP|INR|dollars)?\s*$", re.I)
 CURRENCY = {"$": "USD", "\u20ac": "EUR", "\u00a3": "GBP", "\u20b9": "INR", "dollars": "USD"}
+MAX_SAFE_JSON_INTEGER = 2**53 - 1
 
 
 def parse_scalar(raw: str, kind: str):
@@ -81,8 +83,14 @@ def parse_scalar(raw: str, kind: str):
     match = NUMBER.fullmatch(raw)
     if not match:
         return None
-    number = float(match.group("number"))
-    if kind == "integer" and not number.is_integer():
+    digits = match.group("number")
+    if len(digits.lstrip("-")) > 100:
+        return None
+    try:
+        number = Decimal(digits)
+    except InvalidOperation:
+        return None
+    if kind == "integer" and number != number.to_integral_value():
         return None
     prefix, suffix = match.group("currency"), match.group("suffix")
     prefix = CURRENCY.get(prefix, prefix.upper() if prefix else None)
@@ -94,7 +102,18 @@ def parse_scalar(raw: str, kind: str):
     if unit and unit.startswith("per "):
         unit = unit[4:]
     unit = {"monthly": "month", "annually": "year", "gb": "GB"}.get(unit, unit)
-    return (int(number) if kind == "integer" else number, unit, prefix or suffix)
+    if number == number.to_integral_value():
+        integral = int(number)
+        exact = integral if abs(integral) <= MAX_SAFE_JSON_INTEGER else str(integral)
+    else:
+        exact = format(number.normalize(), "f")
+    return (exact, unit, prefix or suffix)
+
+
+def numeric_encoding(value, kind: str) -> str | None:
+    if kind not in {"number", "integer"}:
+        return None
+    return ("decimal-string" if "." in value else "integer-string") if isinstance(value, str) else "integer"
 
 
 def label_pattern(label: str):
@@ -114,6 +133,7 @@ def candidates_for(page: Page, name: str, spec: dict) -> list[Candidate]:
         if parsed is not None:
             value, unit, currency = parsed
             results.append(Candidate(value=value, unit=unit, currency=currency, value_type=spec["type"],
+                numeric_encoding=numeric_encoding(value, spec["type"]),
                 evidence=Evidence(source_url=page.url, fetched_at=page.fetched_at, excerpt=excerpt,
                     locator=locator, snapshot_hash=digest, label=label, raw_value=raw_value)))
     soup = BeautifulSoup(page.html, "html.parser")
@@ -121,26 +141,34 @@ def candidates_for(page: Page, name: str, spec: dict) -> list[Candidate]:
         if is_hidden(script):
             continue
         try:
-            data = json.loads(script.string or "")
+            if not script.string or len(script.string) > 4000:
+                continue
+            data = json.loads(script.string, parse_float=Decimal)
         except (ValueError, TypeError):
             continue
         for index, node in enumerate(data if isinstance(data, list) else [data]):
-            if not isinstance(node, dict) or name not in node or not isinstance(node[name], (str, int, float, bool)):
+            if not isinstance(node, dict) or name not in node or not isinstance(node[name], (str, int, float, bool, Decimal)):
                 continue
             raw_value = str(node[name])
             parsed = parse_scalar(raw_value, spec["type"])
             if parsed is not None:
                 value, unit, currency = parsed
                 results.append(Candidate(value=value, unit=unit, currency=currency, value_type=spec["type"],
+                    numeric_encoding=numeric_encoding(value, spec["type"]),
                     evidence=Evidence(source_url=page.url, fetched_at=page.fetched_at,
-                        excerpt=json.dumps({name: node[name]}, ensure_ascii=False),
+                        excerpt=script.string,
                         locator=f"{dom_path(script)}::item({index})::{name}", snapshot_hash=digest,
                         label=name, raw_value=raw_value)))
     return results
 
 
 def verify_candidate(candidate: Candidate, source: Page | bytes | str) -> bool:
+    if isinstance(source, bytes):
+        raise TypeError("byte verification requires a Page with recorded encoding and source URL")
     if snapshot_hash(source) != candidate.evidence.snapshot_hash:
+        return False
+    if isinstance(source, Page) and (source.url != candidate.evidence.source_url or
+                                     source.fetched_at != candidate.evidence.fetched_at):
         return False
     html = source.html if isinstance(source, Page) else source.decode("utf-8", "replace") if isinstance(source, bytes) else source
     ev = candidate.evidence
@@ -153,11 +181,13 @@ def verify_candidate(candidate: Candidate, source: Page | bytes | str) -> bool:
             soup = BeautifulSoup(html, "html.parser")
             script = next(tag for tag in soup.find_all("script", type="application/ld+json")
                           if dom_path(tag) == script_path and not is_hidden(tag))
-            data = json.loads(script.string or "")
+            if script.string != ev.excerpt:
+                return False
+            data = json.loads(script.string or "", parse_float=Decimal)
             node = (data if isinstance(data, list) else [data])[index]
             if key != ev.label or not isinstance(node, dict) or key not in node:
                 return False
-            if json.dumps({key: node[key]}, ensure_ascii=False) != ev.excerpt or str(node[key]) != ev.raw_value:
+            if str(node[key]) != ev.raw_value:
                 return False
         except (ValueError, TypeError, IndexError, StopIteration):
             return False
@@ -168,7 +198,8 @@ def verify_candidate(candidate: Candidate, source: Page | bytes | str) -> bool:
         match = label_pattern(ev.label).match(block)
         if not match or match.group(1) != ev.raw_value:
             return False
-    return parse_scalar(ev.raw_value, candidate.value_type) == (candidate.value, candidate.unit, candidate.currency)
+    return (parse_scalar(ev.raw_value, candidate.value_type) == (candidate.value, candidate.unit, candidate.currency)
+            and candidate.numeric_encoding == numeric_encoding(candidate.value, candidate.value_type))
 
 
 def extract_fields(pages: list[Page], properties: dict, blocked: bool) -> dict[str, FieldResult]:
@@ -187,7 +218,8 @@ def extract_fields(pages: list[Page], properties: dict, blocked: bool) -> dict[s
             values = next(iter(unique.values()))
             first = values[0]
             output[name] = FieldResult(state="verified", value=first.value, unit=first.unit,
-                currency=first.currency, evidence=[c.evidence for c in values])
+                currency=first.currency, numeric_encoding=first.numeric_encoding,
+                evidence=[c.evidence for c in values])
         elif len(unique) > 1:
             output[name] = FieldResult(state="conflicting", candidates=[values[0] for values in unique.values()],
                 reason="Distinct source-backed value, unit, or currency claims")

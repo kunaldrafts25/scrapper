@@ -60,8 +60,7 @@ def run_job(request: JobRequest, fetcher=None) -> tuple[Result, dict[str, Page]]
             capture_key = (tracking_key(page.url), snapshot_hash(page))
             duplicate = capture_key in seen_captures
             seen_captures.add(capture_key)
-            if not duplicate:
-                pages.append(page)
+            pages.append(page)
             page_rows.append({"url": page.url, "requested_url": url, "redirects": page.redirects,
                               "fetched_at": page.fetched_at, "snapshot_hash": snapshot_hash(page),
                               "encoding": page.encoding, "decoding_errors": page.decoding_errors,
@@ -98,4 +97,7 @@ def run_job(request: JobRequest, fetcher=None) -> tuple[Result, dict[str, Page]]
                     pages=page_rows, errors=errors, usage=usage)
     log.info(json.dumps({"event": "job_complete", "status": status, "pages": len(pages),
                          "elapsed_seconds": elapsed, "field_states": sorted(states)}))
-    return result, {snapshot_hash(page): page for page in pages}
+    captures = {}
+    for page in pages:
+        captures.setdefault(snapshot_hash(page), page)
+    return result, captures

@@ -70,6 +70,7 @@ class Candidate(BaseModel):
     unit: str | None = None
     currency: str | None = None
     value_type: Literal["string", "number", "integer", "boolean"] | None = None
+    numeric_encoding: Literal["integer", "integer-string", "decimal-string"] | None = None
     reason: str | None = None
 
 
@@ -81,6 +82,7 @@ class FieldResult(BaseModel):
     reason: str | None = None
     unit: str | None = None
     currency: str | None = None
+    numeric_encoding: Literal["integer", "integer-string", "decimal-string"] | None = None
 
     @model_validator(mode="after")
     def verified_has_evidence(self):
@@ -90,8 +92,8 @@ class FieldResult(BaseModel):
 
 
 class Result(BaseModel):
-    schema_version: str = "1.0"
-    extraction_version: str = "0.2.0"
+    schema_version: str = "1.1"
+    extraction_version: str = "0.3.0"
     job_id: str
     status: Literal["complete", "partial", "failed"]
     requested_url: str
