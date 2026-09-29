@@ -6,7 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from verified_extraction.extract import visible_blocks
+from verified_extraction.extract import visible_blocks, parse_scalar
 from verified_extraction.fetch import decode_html
 from verified_extraction.store import Store
 
@@ -41,26 +41,31 @@ def export_local(store: Store, tenant: str, job_id: str, output: Path, site_id: 
             "encoding": encoding, "fetched_at": row["fetched_at"],
             "final_url": row["url"], "redirects": row.get("redirects", []),
             "snapshot_hash": digest}
-    manifest = {"fixture_version": "real-1.0", "site_id": site_id, "split": split,
+    manifest = {"fixture_version": "real-1.1", "site_id": site_id, "split": split,
         "category": category, "seed": request["url"], "schema": request["schema"],
         "options": request.get("options", {}), "page_hints": request.get("page_hints", []),
         "allowed_hostnames": request.get("allowed_hostnames", []),
         "capture_date": result["observed_at"], "permission_note": permission_note,
         "source_job_id": job_id, "pages": pages}
-    template = {"label_schema_version": "1.0", "site_id": site_id, "split": split,
+    template = {"label_schema_version": "1.1", "site_id": site_id, "split": split,
         "labeling_mode": "blind", "reviewer_id": None,
         "fields": {name: {"state": None, "value": None, "unit": None, "currency": None,
                           "source_url": None, "snapshot_hash": None, "excerpt": None,
+                          "raw_value": None, "judgment": "literal", "interpretation_note": None,
                           "reviewer_time_seconds": None} for name in request["schema"]["properties"]}}
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     (output / "labels.template.json").write_text(json.dumps(template, indent=2, ensure_ascii=False), encoding="utf-8")
+    if split == "held_out":
+        adjudication = {"adjudication_schema_version": "1.0", "site_id": site_id,
+            "reviewer_id": None, "fields": {name: {"decision": None, "reason": None,
+                "final": None, "time_spent_seconds": None} for name in request["schema"]["properties"]}}
+        (output / "adjudication.template.json").write_text(
+            json.dumps(adjudication, indent=2, ensure_ascii=False), encoding="utf-8")
     return manifest
 
 
-def load_labeled_case(manifest_path: Path, labels_path: Path) -> dict:
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    labels = json.loads(labels_path.read_text(encoding="utf-8"))
-    if manifest.get("fixture_version") != "real-1.0" or labels.get("label_schema_version") != "1.0":
+def _validate_labels(manifest: dict, labels: dict) -> dict:
+    if manifest.get("fixture_version") != "real-1.1" or labels.get("label_schema_version") != "1.1":
         raise ValueError("Unsupported frozen bundle version")
     if labels.get("labeling_mode") != "blind" or not labels.get("reviewer_id"):
         raise ValueError("Independent blind reviewer identity is required")
@@ -79,23 +84,36 @@ def load_labeled_case(manifest_path: Path, labels_path: Path) -> dict:
         if digest != page["snapshot_hash"]:
             raise ValueError("Frozen capture hash mismatch")
         decoded, _, _ = decode_html(raw, page["content_type"])
-        captures[(page["final_url"], digest)] = decoded
+        captures[(page["final_url"], digest)] = {text for text, _ in visible_blocks(decoded)}
     expected = {}
     allowed_states = {"verified", "missing", "conflicting", "blocked", "unverified"}
     def check_source(name: str, item: dict):
         key = (item.get("source_url"), item.get("snapshot_hash"))
-        if item.get("value") is None or not item.get("excerpt") or key not in captures:
+        if item.get("value") is None or not item.get("excerpt") or key not in captures or not item.get("raw_value"):
             raise ValueError(f"Field {name} lacks source-backed expected evidence")
-        decoded = captures[key]
-        if item["excerpt"] not in [text for text, _ in visible_blocks(decoded)] and item["excerpt"] not in decoded:
-            raise ValueError(f"Field {name} excerpt is absent from its frozen capture")
+        excerpt = item["excerpt"]
+        if excerpt not in captures[key]:
+            raise ValueError(f"Field {name} excerpt is absent from a visible claim in its frozen capture")
+        label = properties[name].get("title") or name.replace("_", " ")
+        label_pos = excerpt.casefold().find(label.casefold())
+        value_pos = excerpt.find(item["raw_value"])
+        if label_pos < 0 or value_pos < label_pos + len(label):
+            raise ValueError(f"Field {name} value is not tied to its label in the excerpt")
+        parsed = parse_scalar(item["raw_value"], properties[name]["type"])
+        if parsed is None or parsed != (item["value"], item.get("unit"), item.get("currency")):
+            raise ValueError(f"Field {name} value, unit or currency disagrees with its captured claim")
     for name, label in fields.items():
         state = label.get("state")
         if state not in allowed_states:
             raise ValueError(f"Field {name} has no valid independent state")
         seconds = label.get("reviewer_time_seconds")
-        if not isinstance(seconds, (int, float)) or seconds < 0:
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds < 0:
             raise ValueError(f"Field {name} needs measured reviewer time")
+        if label.get("judgment") not in {"literal", "interpretation"}:
+            raise ValueError(f"Field {name} needs a judgment type")
+        if label["judgment"] == "interpretation":
+            if state == "verified" or not label.get("interpretation_note"):
+                raise ValueError(f"Field {name} interpretation needs an explanation and cannot be verified without literal support")
         expected[name] = {key: label[key] for key in ("state", "value", "unit", "currency", "source_url",
                           "snapshot_hash", "excerpt") if label.get(key) is not None}
         if state == "verified":
@@ -107,10 +125,61 @@ def load_labeled_case(manifest_path: Path, labels_path: Path) -> dict:
             for candidate in candidates:
                 check_source(name, candidate)
             expected[name]["candidates"] = candidates
-    review_seconds = sum(float(item.get("reviewer_time_seconds") or 0) for item in fields.values())
+    return expected
+
+
+def load_labeled_case(manifest_path: Path, labels_path: Path) -> dict:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("split") == "held_out":
+        folder = manifest_path.parent
+        first = json.loads((folder / "labels.reviewer-a.json").read_text(encoding="utf-8"))
+        second = json.loads((folder / "labels.reviewer-b.json").read_text(encoding="utf-8"))
+        left = _validate_labels(manifest, first)
+        right = _validate_labels(manifest, second)
+        if first["reviewer_id"] == second["reviewer_id"]:
+            raise ValueError("Two distinct blind reviewers are required")
+        adjudication = json.loads((folder / "adjudication.json").read_text(encoding="utf-8"))
+        if (adjudication.get("adjudication_schema_version") != "1.0" or
+            adjudication.get("site_id") != manifest["site_id"] or
+            adjudication.get("reviewer_id") in {None, first["reviewer_id"], second["reviewer_id"]} or
+            set(adjudication.get("fields", {})) != set(left)):
+            raise ValueError("A separate complete adjudication record is required")
+        expected = {}
+        for name, decision in adjudication["fields"].items():
+            choice = decision.get("decision")
+            if choice not in {"agree", "select_a", "select_b", "resolved"}:
+                raise ValueError(f"Field {name} has no adjudication decision")
+            if choice == "agree":
+                if left[name] != right[name]:
+                    raise ValueError(f"Field {name} disagrees and cannot be marked agreed")
+                expected[name] = left[name]
+            else:
+                if not decision.get("reason"):
+                    raise ValueError(f"Field {name} disagreement needs a reason")
+                if choice == "resolved":
+                    final_label = {"label_schema_version": "1.1", "site_id": manifest["site_id"],
+                        "split": manifest["split"], "labeling_mode": "blind",
+                        "reviewer_id": adjudication["reviewer_id"], "fields": {
+                            **first["fields"], name: decision.get("final")}}
+                    expected[name] = _validate_labels(manifest, final_label)[name]
+                else:
+                    expected[name] = left[name] if choice == "select_a" else right[name]
+            seconds = decision.get("time_spent_seconds")
+            if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds < 0:
+                raise ValueError(f"Field {name} needs adjudication time")
+        review_seconds = sum(float(item["reviewer_time_seconds"]) for item in first["fields"].values()) + \
+            sum(float(item["reviewer_time_seconds"]) for item in second["fields"].values()) + \
+            sum(float(item["time_spent_seconds"]) for item in adjudication["fields"].values())
+        label_a, label_b = first, second
+    else:
+        labels = json.loads(labels_path.read_text(encoding="utf-8"))
+        expected = _validate_labels(manifest, labels)
+        review_seconds = sum(float(item["reviewer_time_seconds"]) for item in labels["fields"].values())
+        label_a, label_b, adjudication = labels, None, None
     site = manifest["site_id"]
     return {"id": site, "site": site, "split": manifest["split"], "category": manifest["category"],
         "seed": manifest["seed"], "schema": manifest["schema"], "options": manifest["options"],
         "page_hints": manifest["page_hints"], "allowed_hostnames": manifest["allowed_hostnames"],
         "pages": manifest["pages"], "expected": expected, "review_seconds": review_seconds,
-        "permission_note": manifest["permission_note"]}
+        "permission_note": manifest["permission_note"], "independent_labels": {
+            "reviewer_a": label_a, "reviewer_b": label_b, "adjudication": adjudication}}

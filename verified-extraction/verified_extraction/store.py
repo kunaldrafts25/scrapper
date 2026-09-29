@@ -33,6 +33,15 @@ class Store:
             CREATE TABLE IF NOT EXISTS reviews(tenant TEXT NOT NULL, job_id TEXT NOT NULL,
                 field_name TEXT NOT NULL, review_json TEXT NOT NULL, updated_at TEXT NOT NULL,
                 PRIMARY KEY(tenant,job_id,field_name));
+            CREATE TABLE IF NOT EXISTS review_sessions(id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant TEXT NOT NULL, job_id TEXT NOT NULL, field_name TEXT NOT NULL,
+                reviewer_id TEXT NOT NULL, started_at REAL NOT NULL, stopped_at REAL,
+                elapsed_seconds REAL);
+            CREATE UNIQUE INDEX IF NOT EXISTS one_active_review_per_job
+                ON review_sessions(tenant,job_id) WHERE stopped_at IS NULL;
+            CREATE TABLE IF NOT EXISTS review_history(id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant TEXT NOT NULL, job_id TEXT NOT NULL, field_name TEXT NOT NULL,
+                review_json TEXT NOT NULL, updated_at TEXT NOT NULL);
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(snapshots)")}
             for column, definition in (("raw", "BLOB"), ("encoding", "TEXT"),
@@ -46,6 +55,7 @@ class Store:
             job_columns = {row[1] for row in db.execute("PRAGMA table_info(jobs)")}
             if "request_json" not in job_columns:
                 db.execute("ALTER TABLE jobs ADD COLUMN request_json TEXT")
+        self.clock = time.time
 
     @contextmanager
     def _db(self):
@@ -138,10 +148,59 @@ class Store:
     def save_review(self, tenant: str, job_id: str, field_name: str, review: dict):
         timestamp = datetime.now(timezone.utc).isoformat()
         with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            reviewer = review["reviewer_id"]
+            if db.execute("SELECT 1 FROM review_sessions WHERE tenant=? AND job_id=? AND stopped_at IS NULL",
+                          (tenant, job_id)).fetchone():
+                raise ValueError("Stop the active review before saving")
+            row = db.execute("SELECT COALESCE(SUM(elapsed_seconds),0),COUNT(*) FROM review_sessions WHERE tenant=? AND job_id=? AND field_name=? AND reviewer_id=? AND stopped_at IS NOT NULL",
+                             (tenant, job_id, field_name, reviewer)).fetchone()
+            if not row[1]:
+                raise ValueError("Start and stop a review session before saving")
+            review = {**review, "time_spent_seconds": round(row[0], 3), "time_source": "session"}
             db.execute("""INSERT INTO reviews VALUES(?,?,?,?,?) ON CONFLICT(tenant,job_id,field_name)
                 DO UPDATE SET review_json=excluded.review_json,updated_at=excluded.updated_at""",
                 (tenant, job_id, field_name, json.dumps(review), timestamp))
+            db.execute("INSERT INTO review_history(tenant,job_id,field_name,review_json,updated_at) VALUES(?,?,?,?,?)",
+                       (tenant, job_id, field_name, json.dumps(review), timestamp))
         return {**review, "updated_at": timestamp}
+
+    def start_review(self, tenant: str, job_id: str, field_name: str, reviewer_id: str):
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM review_sessions WHERE tenant=? AND job_id=? AND stopped_at IS NULL",
+                          (tenant, job_id)).fetchone():
+                raise ValueError("Another field review is active")
+            started = self.clock()
+            db.execute("INSERT INTO review_sessions(tenant,job_id,field_name,reviewer_id,started_at) VALUES(?,?,?,?,?)",
+                       (tenant, job_id, field_name, reviewer_id, started))
+        return {"field_name": field_name, "reviewer_id": reviewer_id, "started_at": started}
+
+    def stop_review(self, tenant: str, job_id: str, field_name: str, reviewer_id: str):
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT id,started_at FROM review_sessions WHERE tenant=? AND job_id=? AND field_name=? AND reviewer_id=? AND stopped_at IS NULL",
+                             (tenant, job_id, field_name, reviewer_id)).fetchone()
+            if not row:
+                raise ValueError("No matching active review")
+            stopped = self.clock()
+            elapsed = max(0.0, stopped - row[1])
+            db.execute("UPDATE review_sessions SET stopped_at=?,elapsed_seconds=? WHERE id=?",
+                       (stopped, elapsed, row[0]))
+        return {"field_name": field_name, "reviewer_id": reviewer_id,
+                "started_at": row[1], "stopped_at": stopped, "elapsed_seconds": round(elapsed, 3)}
+
+    def review_history(self, tenant: str, job_id: str) -> list[dict]:
+        with self._db() as db:
+            rows = db.execute("SELECT field_name,review_json,updated_at FROM review_history WHERE tenant=? AND job_id=? ORDER BY id",
+                              (tenant, job_id)).fetchall()
+        return [{"field_name": name, **json.loads(body), "updated_at": timestamp} for name, body, timestamp in rows]
+
+    def review_sessions(self, tenant: str, job_id: str) -> list[dict]:
+        with self._db() as db:
+            rows = db.execute("SELECT field_name,reviewer_id,started_at,stopped_at,elapsed_seconds FROM review_sessions WHERE tenant=? AND job_id=? ORDER BY id",
+                              (tenant, job_id)).fetchall()
+        return [dict(zip(("field_name", "reviewer_id", "started_at", "stopped_at", "elapsed_seconds"), row)) for row in rows]
 
     def reviews(self, tenant: str, job_id: str) -> dict:
         with self._db() as db:
@@ -173,6 +232,8 @@ class Store:
 
     def delete(self, tenant: str, job_id: str):
         with self._db() as db:
+            db.execute("DELETE FROM review_sessions WHERE tenant=? AND job_id=?", (tenant, job_id))
+            db.execute("DELETE FROM review_history WHERE tenant=? AND job_id=?", (tenant, job_id))
             db.execute("DELETE FROM reviews WHERE tenant=? AND job_id=?", (tenant, job_id))
             db.execute("DELETE FROM claims WHERE tenant=? AND idem IN (SELECT idem FROM jobs WHERE tenant=? AND id=?)",
                        (tenant, tenant, job_id))
@@ -182,6 +243,8 @@ class Store:
     def purge_expired(self):
         cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         with self._db() as db:
+            db.execute("DELETE FROM review_sessions WHERE (tenant,job_id) IN (SELECT tenant,id FROM jobs WHERE created_at < ?)", (cutoff,))
+            db.execute("DELETE FROM review_history WHERE (tenant,job_id) IN (SELECT tenant,id FROM jobs WHERE created_at < ?)", (cutoff,))
             db.execute("DELETE FROM reviews WHERE (tenant,job_id) IN (SELECT tenant,id FROM jobs WHERE created_at < ?)", (cutoff,))
             db.execute("DELETE FROM snapshots WHERE (tenant,job_id) IN (SELECT tenant,id FROM jobs WHERE created_at < ?)", (cutoff,))
             db.execute("DELETE FROM jobs WHERE created_at < ?", (cutoff,))

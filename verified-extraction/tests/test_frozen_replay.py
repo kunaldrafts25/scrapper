@@ -31,7 +31,7 @@ def test_frozen_bundle_requires_independent_source_labels():
     bundle = root / "site"
     try:
         manifest = export_local(store, "tenant", result.job_id, bundle, "frozen.example",
-                                "held_out", "static", "synthetic fixture authored locally")
+                                "development", "static", "synthetic fixture authored locally")
         template = json.loads((bundle / "labels.template.json").read_text(encoding="utf-8"))
         assert "machine_result" not in template
         labels_path = bundle / "labels.json"
@@ -45,7 +45,12 @@ def test_frozen_bundle_requires_independent_source_labels():
         evidence = result.fields["support"].evidence[0]
         template["fields"]["support"].update({"state": "verified", "value": "Email",
             "source_url": evidence.source_url, "snapshot_hash": evidence.snapshot_hash,
-            "excerpt": evidence.excerpt})
+            "excerpt": evidence.excerpt, "raw_value": "Email"})
+        template["fields"]["support"]["value"] = "Phone"
+        labels_path.write_text(json.dumps(template), encoding="utf-8")
+        with pytest.raises(ValueError, match="disagrees"):
+            load_labeled_case(bundle / "manifest.json", labels_path)
+        template["fields"]["support"]["value"] = "Email"
         labels_path.write_text(json.dumps(template), encoding="utf-8")
         case = load_labeled_case(bundle / "manifest.json", labels_path)
         report = score([case])
@@ -65,6 +70,49 @@ def test_frozen_bundle_requires_independent_source_labels():
         bundle.rmdir()
         db_path.unlink()
         root.rmdir()
+
+
+def test_held_out_requires_two_blind_labels_and_audited_adjudication():
+    import base64
+    import hashlib
+    bundle = Path(f"test-labels-{uuid.uuid4().hex}")
+    bundle.mkdir()
+    try:
+        raw = b"<p>Support: Email</p>"
+        digest = hashlib.sha256(raw).hexdigest()
+        manifest = {"fixture_version": "real-1.1", "site_id": "site-1", "split": "held_out",
+            "category": "static", "seed": "https://site.example/", "schema": {"type": "object",
+                "properties": {"support": {"type": "string"}}}, "options": {},
+            "page_hints": [], "allowed_hostnames": [], "permission_note": "synthetic",
+            "pages": {"https://site.example/": {"raw_base64": base64.b64encode(raw).decode(),
+                "snapshot_hash": digest, "content_type": "text/html", "final_url": "https://site.example/"}}}
+        (bundle / "manifest.json").write_text(json.dumps(manifest))
+        field = {"state": "verified", "value": "Email", "unit": None, "currency": None,
+            "source_url": "https://site.example/", "snapshot_hash": digest,
+            "excerpt": "Support: Email", "raw_value": "Email", "judgment": "literal",
+            "reviewer_time_seconds": 4}
+        def label(reviewer, item):
+            return {"label_schema_version": "1.1", "site_id": "site-1", "split": "held_out",
+                "labeling_mode": "blind", "reviewer_id": reviewer, "fields": {"support": item}}
+        first = label("a", field)
+        second = label("b", {**field, "state": "missing", "value": None, "reviewer_time_seconds": 5})
+        (bundle / "labels.reviewer-a.json").write_text(json.dumps(first))
+        (bundle / "labels.reviewer-b.json").write_text(json.dumps(second))
+        record = {"adjudication_schema_version": "1.0", "site_id": "site-1", "reviewer_id": "c",
+            "fields": {"support": {"decision": "agree", "reason": "", "time_spent_seconds": 3}}}
+        (bundle / "adjudication.json").write_text(json.dumps(record))
+        with pytest.raises(ValueError, match="disagrees"):
+            load_labeled_case(bundle / "manifest.json", bundle / "labels.json")
+        record["fields"]["support"].update({"decision": "select_a", "reason": "visible literal claim"})
+        (bundle / "adjudication.json").write_text(json.dumps(record))
+        case = load_labeled_case(bundle / "manifest.json", bundle / "labels.json")
+        assert case["expected"]["support"]["value"] == "Email"
+        assert case["review_seconds"] == 12
+        assert case["independent_labels"]["reviewer_b"]["fields"]["support"]["state"] == "missing"
+    finally:
+        for file in bundle.iterdir():
+            file.unlink()
+        bundle.rmdir()
 
 
 def test_conflict_score_requires_labeled_source_binding():

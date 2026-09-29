@@ -26,17 +26,38 @@ def test_reviewer_labels_export_and_tenant_isolation(monkeypatch):
         "options": {"max_pages": 1, "max_depth": 0, "deadline_seconds": 10}}
     result = client.post("/v1/jobs", json=body, headers=a).json()
     job_id = result["job_id"]
-    review = {"verdict": "correct", "reason": "Exact visible label", "time_spent_seconds": 45,
+    ticks = iter([100, 145, 200, 220, 300, 310, 400, 405])
+    api.store.clock = lambda: next(ticks)
+    review = {"verdict": "correct", "reason": "Exact visible label", "reviewer_id": "analyst-1",
               "corrected_value": None, "corrected_source_url": None, "corrected_excerpt": None}
+    session = {"reviewer_id": "analyst-1"}
+    assert client.post(f"/v1/jobs/{job_id}/reviews/support/start", json=session, headers=a).status_code == 200
+    assert client.post(f"/v1/jobs/{job_id}/reviews/plan_price/start", json=session, headers=a).status_code == 409
+    assert client.post(f"/v1/jobs/{job_id}/reviews/support/stop", json=session, headers=a).json()["elapsed_seconds"] == 45
     assert client.put(f"/v1/jobs/{job_id}/reviews/support", json=review, headers=a).status_code == 200
+    for field, seconds in (("plan_price", 20), ("usage_limit", 10)):
+        assert client.post(f"/v1/jobs/{job_id}/reviews/{field}/start", json=session, headers=a).status_code == 200
+        assert client.post(f"/v1/jobs/{job_id}/reviews/{field}/stop", json=session, headers=a).json()["elapsed_seconds"] == seconds
+        assert client.put(f"/v1/jobs/{job_id}/reviews/{field}", json=review, headers=a).status_code == 200
     assert client.put(f"/v1/jobs/{job_id}/reviews/support", json=review, headers=b).status_code == 404
     assert client.get(f"/v1/jobs/{job_id}/reviews", headers=b).status_code == 404
     assert client.get(f"/v1/jobs/{job_id}/labels", headers=b).status_code == 404
     labels = client.get(f"/v1/jobs/{job_id}/labels", headers=a).json()
-    assert labels["label_schema_version"] == "1.0"
+    assert labels["label_schema_version"] == "1.1"
     assert labels["machine_result"] == result
     assert labels["reviews"]["support"]["verdict"] == "correct"
-    assert labels["review_minutes_per_accepted_field"] == 0.75
+    assert labels["review_minutes_total"] == 1.25
+    assert labels["review_minutes_per_accepted_field"] == 0.4167
+    assert len(labels["review_sessions"]) == 3
+    assert sum(row["elapsed_seconds"] for row in labels["review_sessions"]) == 75
+    assert client.post(f"/v1/jobs/{job_id}/reviews/support/start", json=session, headers=a).status_code == 200
+    assert client.post(f"/v1/jobs/{job_id}/reviews/support/stop", json=session, headers=a).json()["elapsed_seconds"] == 5
+    edited = {**review, "verdict": "wrong", "reason": "Second inspection"}
+    assert client.put(f"/v1/jobs/{job_id}/reviews/support", json=edited, headers=a).json()["time_spent_seconds"] == 50
+    history = client.get(f"/v1/jobs/{job_id}/review-history", headers=a).json()
+    assert len(history["edits"]) == 4 and len(history["sessions"]) == 4
+    assert history["edits"][0]["verdict"] == "correct" and history["edits"][-1]["verdict"] == "wrong"
+    assert client.get(f"/v1/jobs/{job_id}/labels", headers=a).json()["review_minutes_total"] == 1.3333
     evidence = client.get(f"/v1/jobs/{job_id}/review-evidence", headers=a).json()["support"][0]
     assert evidence["source_bound"] and evidence["source_node"] == "<p>Support: Email</p>"
     assert client.get(f"/v1/jobs/{job_id}", headers=a).json() == result

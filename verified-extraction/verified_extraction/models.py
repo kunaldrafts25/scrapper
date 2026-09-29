@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 import re
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
 
 class CrawlOptions(BaseModel):
@@ -106,10 +106,14 @@ class Result(BaseModel):
 
 
 class ReviewInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     verdict: Literal["correct", "wrong", "unsupported", "conflicting", "uncertain"]
     corrected_value: str | None = Field(default=None, max_length=300)
     corrected_source_url: str | None = Field(default=None, max_length=2000)
     corrected_excerpt: str | None = Field(default=None, max_length=1000)
     reason: str = Field(default="", max_length=500)
-    time_spent_seconds: float = Field(ge=0, le=36000)
-    reviewer_id: str | None = Field(default=None, max_length=80)
+    reviewer_id: str = Field(min_length=1, max_length=80)
+
+
+class ReviewSessionInput(BaseModel):
+    reviewer_id: str = Field(min_length=1, max_length=80)

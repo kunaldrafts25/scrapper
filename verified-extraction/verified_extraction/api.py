@@ -11,7 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.responses import JSONResponse
 
-from .models import JobRequest, ReviewInput
+from .models import JobRequest, ReviewInput, ReviewSessionInput
 from .security import FetchError
 from .worker import run_hard
 from .extract import source_node_for
@@ -114,13 +114,15 @@ def review_app():
     document = """<!doctype html><html><head><meta charset='utf-8'><title>Evidence review</title></head>
 <body><h1>Evidence review</h1><form id='form'><label>Job ID <input id='job' required></label>
 <label>Bearer key <input id='key' type='password' required autocomplete='off'></label>
+<label>Reviewer ID <input id='reviewer' required></label>
 <button>Load</button></form><button id='export' type='button' disabled>Download labels</button><div id='result'></div>
 <script nonce='NONCE'>
 const form=document.getElementById('form'), out=document.getElementById('result'), exportButton=document.getElementById('export');
-let activeId='', activeHeaders=null;
+let activeId='', activeHeaders=null, activeReviewer='', activeField='';
 function add(parent,tag,value){const node=document.createElement(tag);node.textContent=value;parent.append(node);return node;}
 form.addEventListener('submit',async event=>{event.preventDefault();out.replaceChildren();
  const id=document.getElementById('job').value.trim(), key=document.getElementById('key').value;
+ activeReviewer=document.getElementById('reviewer').value.trim();
  if(!/^[0-9a-f-]{36}$/i.test(id)){add(out,'p','Invalid job ID');return;}
  const headers={Authorization:'Bearer '+key};
  const response=await fetch('/v1/jobs/'+id,{headers,cache:'no-store'});
@@ -132,7 +134,7 @@ form.addEventListener('submit',async event=>{event.preventDefault();out.replaceC
  const evidenceResponse=await fetch('/v1/jobs/'+id+'/review-evidence',{headers,cache:'no-store'});
  const evidenceMap=evidenceResponse.ok?await evidenceResponse.json():{};
  for(const [name,field] of Object.entries(job.fields)){
-  const section=add(out,'section','');const started=performance.now();add(section,'h2',name+' — '+field.state);
+  const section=add(out,'section','');add(section,'h2',name+' — '+field.state);
   add(section,'p','Value: '+JSON.stringify(field.value)+(field.unit?' / '+field.unit:'')+(field.currency?' '+field.currency:''));
   const evidence=evidenceMap[name]||[];
   for(const item of evidence){add(section,'h3',item.source_url+' '+item.locator);add(section,'blockquote',item.excerpt);
@@ -151,16 +153,30 @@ form.addEventListener('submit',async event=>{event.preventDefault();out.replaceC
   const source=section.appendChild(document.createElement('input'));source.placeholder='Corrected source URL (optional)';source.value=saved[name]?.corrected_source_url||'';
   const excerpt=section.appendChild(document.createElement('input'));excerpt.placeholder='Supporting excerpt (optional)';excerpt.value=saved[name]?.corrected_excerpt||'';
   const reason=section.appendChild(document.createElement('textarea'));reason.placeholder='Short reason';reason.value=saved[name]?.reason||'';
-  const seconds=section.appendChild(document.createElement('input'));seconds.type='number';seconds.min='0';seconds.step='0.1';seconds.placeholder='Seconds spent (auto if blank)';
-  if(saved[name])seconds.value=saved[name].time_spent_seconds;
+  const timer=add(section,'p','Recorded seconds: '+(saved[name]?.time_spent_seconds||0));
+  const startButton=add(section,'button','Start review'), stopButton=add(section,'button','Stop review');
+  startButton.type='button';stopButton.type='button';
   const save=add(section,'button','Save verdict'), status=add(section,'p','');save.type='button';
+  startButton.addEventListener('click',async()=>{
+   if(activeField){status.textContent='Stop the active field first';return;}
+   const response=await fetch('/v1/jobs/'+id+'/reviews/'+encodeURIComponent(name)+'/start',
+    {method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({reviewer_id:activeReviewer})});
+   if(response.ok){activeField=name;status.textContent='Reviewing '+name;}else status.textContent='Start failed ('+response.status+')';
+  });
+  stopButton.addEventListener('click',async()=>{
+   if(activeField!==name){status.textContent='This field is not active';return;}
+   const response=await fetch('/v1/jobs/'+id+'/reviews/'+encodeURIComponent(name)+'/stop',
+    {method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({reviewer_id:activeReviewer})});
+   if(response.ok){activeField='';const data=await response.json();status.textContent='Stopped; session '+data.elapsed_seconds+' seconds';}
+   else status.textContent='Stop failed ('+response.status+')';
+  });
   save.addEventListener('click',async()=>{
    if(!verdict.value){status.textContent='Choose a verdict';return;}
-   const spent=seconds.value===''?Math.round((performance.now()-started)/100)/10:Number(seconds.value);
    const body={verdict:verdict.value,corrected_value:corrected.value||null,corrected_source_url:source.value||null,
-    corrected_excerpt:excerpt.value||null,reason:reason.value,time_spent_seconds:spent};
+    corrected_excerpt:excerpt.value||null,reason:reason.value,reviewer_id:activeReviewer};
    const response=await fetch('/v1/jobs/'+id+'/reviews/'+encodeURIComponent(name),{method:'PUT',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(body)});
-   status.textContent=response.ok?'Saved':'Save failed ('+response.status+')';if(response.ok)seconds.value=spent;
+   status.textContent=response.ok?'Saved':'Save failed ('+response.status+')';
+   if(response.ok){const data=await response.json();timer.textContent='Recorded seconds: '+data.time_spent_seconds;}
   });
  }
 });
@@ -218,7 +234,32 @@ def put_review(job_id: str, field_name: str, review: ReviewInput, tenant_id: str
     result = store.get(tenant_id, job_id)
     if result is None or field_name not in result["fields"]:
         raise HTTPException(404, detail={"code": "NOT_FOUND"})
-    return store.save_review(tenant_id, job_id, field_name, review.model_dump())
+    try:
+        return store.save_review(tenant_id, job_id, field_name, review.model_dump())
+    except ValueError as exc:
+        raise HTTPException(409, detail={"code": "REVIEW_SESSION_REQUIRED", "message": str(exc)}) from exc
+
+
+@app.post("/v1/jobs/{job_id}/reviews/{field_name}/start")
+def start_review(job_id: str, field_name: str, session: ReviewSessionInput, tenant_id: str = Depends(tenant)):
+    result = store.get(tenant_id, job_id)
+    if result is None or field_name not in result["fields"]:
+        raise HTTPException(404, detail={"code": "NOT_FOUND"})
+    try:
+        return store.start_review(tenant_id, job_id, field_name, session.reviewer_id)
+    except ValueError as exc:
+        raise HTTPException(409, detail={"code": "REVIEW_ALREADY_ACTIVE", "message": str(exc)}) from exc
+
+
+@app.post("/v1/jobs/{job_id}/reviews/{field_name}/stop")
+def stop_review(job_id: str, field_name: str, session: ReviewSessionInput, tenant_id: str = Depends(tenant)):
+    result = store.get(tenant_id, job_id)
+    if result is None or field_name not in result["fields"]:
+        raise HTTPException(404, detail={"code": "NOT_FOUND"})
+    try:
+        return store.stop_review(tenant_id, job_id, field_name, session.reviewer_id)
+    except ValueError as exc:
+        raise HTTPException(409, detail={"code": "NO_ACTIVE_REVIEW", "message": str(exc)}) from exc
 
 
 @app.get("/v1/jobs/{job_id}/reviews")
@@ -226,6 +267,14 @@ def get_reviews(job_id: str, tenant_id: str = Depends(tenant)):
     if store.get(tenant_id, job_id) is None:
         raise HTTPException(404, detail={"code": "NOT_FOUND"})
     return store.reviews(tenant_id, job_id)
+
+
+@app.get("/v1/jobs/{job_id}/review-history")
+def get_review_history(job_id: str, tenant_id: str = Depends(tenant)):
+    if store.get(tenant_id, job_id) is None:
+        raise HTTPException(404, detail={"code": "NOT_FOUND"})
+    return {"sessions": store.review_sessions(tenant_id, job_id),
+            "edits": store.review_history(tenant_id, job_id)}
 
 
 @app.get("/v1/jobs/{job_id}/labels")
@@ -236,11 +285,13 @@ def export_labels(job_id: str, tenant_id: str = Depends(tenant)):
     reviews = store.reviews(tenant_id, job_id)
     accepted = sum(result["fields"][name]["state"] == "verified" and item["verdict"] == "correct"
                    for name, item in reviews.items())
-    minutes = sum(item["time_spent_seconds"] for item in reviews.values()) / 60
-    return {"label_schema_version": "1.0", "job_id": job_id, "requested_url": result["requested_url"],
+    sessions = store.review_sessions(tenant_id, job_id)
+    minutes = sum(item["elapsed_seconds"] or 0 for item in sessions if item["stopped_at"] is not None) / 60
+    return {"label_schema_version": "1.1", "job_id": job_id, "requested_url": result["requested_url"],
             "machine_schema_version": result["schema_version"], "extraction_version": result["extraction_version"],
             "request": store.get_request(tenant_id, job_id),
             "machine_result": result, "reviews": reviews, "reviewed_fields": len(reviews),
+            "review_sessions": sessions, "review_history": store.review_history(tenant_id, job_id),
             "review_minutes_total": round(minutes, 4), "review_minutes_per_accepted_field":
                 round(minutes / accepted, 4) if accepted else None,
             "capture_hashes": [page["snapshot_hash"] for page in result["pages"] if "snapshot_hash" in page]}
