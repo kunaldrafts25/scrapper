@@ -53,6 +53,7 @@ def export_local(store: Store, tenant: str, job_id: str, output: Path, site_id: 
         "source_job_id": job_id, "pages": pages, "plan_name": plan_name,
         "code_revision": revision, "live_elapsed_seconds": result["usage"].get("elapsed_seconds"),
         "http_requests_started": result["usage"].get("http_requests_started"),
+        "preflight_http_requests_started": None,
         "access_policy_violations": None}
     template = {"label_schema_version": "2.0", "site_id": site_id, "split": split,
         "labeling_mode": "blind", "reviewer_id": None, "plan_name": plan_name,
@@ -357,6 +358,7 @@ def load_labeled_case(manifest_path: Path, labels_path: Path) -> dict:
         "capture_date": manifest.get("capture_date"),
         "live_elapsed_seconds": manifest.get("live_elapsed_seconds"),
         "http_requests_started": manifest.get("http_requests_started"),
+        "preflight_http_requests_started": manifest.get("preflight_http_requests_started"),
         "access_policy_violations": manifest.get("access_policy_violations"),
         "manual_baseline_seconds": baseline_seconds, "manual_baseline_errors": baseline_errors,
         "manual_baseline_fields": baseline_fields, "manual_baseline": baseline,

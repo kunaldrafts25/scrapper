@@ -35,12 +35,15 @@ def finalize(cases: list[dict], scored: dict, inventory: list[dict], agreement: 
     if set(costs) != set(by_site):
         raise ValueError("Measured cost ledger needs every approved site")
     for case in cases:
-        if (case.get("live_elapsed_seconds") is None or case.get("http_requests_started") is None or
+        if (case.get("live_elapsed_seconds") is None or
+            type(case.get("http_requests_started")) is not int or case["http_requests_started"] < 0 or
             case.get("manual_baseline_seconds") is None or case.get("review_seconds") is None or
             case.get("manual_baseline_errors") is None or not case.get("assisted_reviews") or
             case.get("corrected_row_errors") is None or not case.get("corrected_row") or
             not case.get("independent_labels") or not case.get("code_revision") or
             not case.get("capture_date") or case.get("blind_label_seconds") is None or
+            type(case.get("preflight_http_requests_started")) is not int or
+            case["preflight_http_requests_started"] < 0 or
             not isinstance(case.get("access_policy_violations"), list)):
             raise ValueError(f"Site {case['site']} lacks live, blind, review or baseline measurements")
         if case["split"] == "held_out":
@@ -113,7 +116,8 @@ def finalize(cases: list[dict], scored: dict, inventory: list[dict], agreement: 
                         sum(row["manual_baseline_errors"] for row in held),
         "robots_scope_policy": not robots_scope_stops and not reported_violations,
         "access_failures": d["access_failures"] <= 2,
-        "request_bounds": all(row["http_requests_started"] <= int(by_site[row["site"]]["max_http_requests"])
+        "request_bounds": all(row["http_requests_started"] + row["preflight_http_requests_started"] <=
+                              int(by_site[row["site"]]["max_http_requests"])
                               for row in cases),
         "cost_ceiling": cost_per_row is not None and cost_per_row <= 5.0,
     }

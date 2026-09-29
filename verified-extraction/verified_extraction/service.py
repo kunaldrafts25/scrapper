@@ -76,10 +76,10 @@ def run_job(request: JobRequest, fetcher=None) -> tuple[Result, dict[str, Page]]
             page_rows.append({"requested_url": url, "status": "error", "error_code": exc.code})
             METRICS["fetch_failures"] += 1
             log.warning(json.dumps({"event": "fetch_error", "code": exc.code}))
-            if exc.code in {"ACCESS_DENIED", "ROBOTS_DENIED", "ROBOTS_UNAVAILABLE", "PRIVATE_TARGET"}:
+            if exc.code in {"ACCESS_DENIED", "ROBOTS_DENIED", "ROBOTS_UNAVAILABLE",
+                            "PRIVATE_TARGET", "OUT_OF_SCOPE"}:
                 blocked = True
-                if exc.code == "ACCESS_DENIED":
-                    break
+                break
     fields = extract_fields(pages, request.schema_["properties"], blocked)
     for field in fields.values():
         METRICS[field.state + "_fields"] += 1

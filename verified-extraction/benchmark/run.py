@@ -195,6 +195,7 @@ def score(cases: list[dict]) -> dict:
                      "blind_label_seconds": case.get("blind_label_seconds"),
                      "live_elapsed_seconds": case.get("live_elapsed_seconds"),
                      "http_requests_started": case.get("http_requests_started"),
+                     "preflight_http_requests_started": case.get("preflight_http_requests_started"),
                      "manual_baseline_seconds": case.get("manual_baseline_seconds"),
                      "manual_baseline_errors": case.get("manual_baseline_errors"),
                      "manual_baseline_fields": case.get("manual_baseline_fields"),
@@ -258,6 +259,7 @@ def summarize(rows: list[dict]) -> dict:
     baseline_seconds = live_seconds = 0.0
     live_cases = 0
     http_requests = 0
+    preflight_http_requests = 0
     paired_cases = 0
     paired_baseline_seconds = paired_assisted_seconds = 0.0
     for row in rows:
@@ -281,6 +283,8 @@ def summarize(rows: list[dict]) -> dict:
             live_seconds += row["live_elapsed_seconds"]
         if row.get("http_requests_started") is not None:
             http_requests += row["http_requests_started"]
+        if row.get("preflight_http_requests_started") is not None:
+            preflight_http_requests += row["preflight_http_requests_started"]
         if row.get("manual_baseline_seconds") is not None and row.get("review_seconds") is not None:
             paired_cases += 1
             paired_baseline_seconds += row["manual_baseline_seconds"]
@@ -334,6 +338,8 @@ def summarize(rows: list[dict]) -> dict:
                                                  paired_baseline_seconds),
         "mean_live_latency_seconds": ratio(live_seconds, live_cases),
         "live_latency_cases": live_cases, "http_requests_started": http_requests if live_cases else None,
+        "preflight_http_requests_started": preflight_http_requests if live_cases else None,
+        "total_http_requests_started": http_requests + preflight_http_requests if live_cases else None,
         "setup_review_time_minutes": None, "cost_per_accepted_field_usd": None}
 
 

@@ -23,7 +23,8 @@ def _gate_fixture():
              for row in inventory}
     cases = [{"site": row["site_id"], "split": row["split"], "plan_name": row["plan_name"],
               "seed": row["seed_url"], "live_elapsed_seconds": 1,
-              "http_requests_started": 2, "manual_baseline_seconds": 120,
+              "http_requests_started": 2, "preflight_http_requests_started": 1,
+              "manual_baseline_seconds": 120,
               "manual_baseline_errors": 0, "corrected_row_errors": 0,
               "corrected_row": {"fields": {"named_plan": {"state": "missing"}}},
               "access_policy_violations": [],
@@ -83,3 +84,10 @@ def test_reported_scope_violation_forces_no_go():
     result = finalize(cases, scored, inventory, agreement, costs)
     assert result["checks"]["robots_scope_policy"] is False
     assert result["reported_policy_violations"]
+
+
+def test_preflight_and_job_requests_share_site_ceiling():
+    cases, scored, inventory, agreement, costs = _gate_fixture()
+    cases[0]["http_requests_started"] = 20
+    result = finalize(cases, scored, inventory, agreement, costs)
+    assert result["checks"]["request_bounds"] is False
