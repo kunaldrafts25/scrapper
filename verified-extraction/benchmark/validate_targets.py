@@ -2,6 +2,7 @@
 import argparse
 import csv
 import json
+from datetime import date
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -17,16 +18,23 @@ def validate_rows(rows: list[dict]) -> dict:
     requests = 0
     spend = 0.0
     for row in rows:
-        if any(not row.get(key) or "PENDING" in row[key].upper() or "REPLACE" in row[key].upper()
-               for key in ("site_id", "seed_url", "plan_name", "allowed_hostnames", "access_basis",
-                           "robots_checked_at", "approval_record")):
-            raise ValueError("Every target needs a completed URL, plan, access and approval record")
+        required = ("site_id", "vendor_name", "category", "seed_url", "plan_name", "allowed_hostnames",
+            "access_basis", "robots_status", "robots_checked_at", "approval_record", "max_pages",
+            "max_depth", "deadline_seconds", "max_http_requests", "date_window_start",
+            "date_window_end", "retention_days", "provider_accounts", "data_destinations",
+            "max_provider_spend_usd", "expected_impact", "selection_status")
+        if any(not row.get(key) or any(marker in row[key].upper() for marker in
+               ("PENDING", "REPLACE", "UNVERIFIED", "NOT_CHECKED")) for key in required):
+            raise ValueError("Every target needs a completed plan, access, robots and approval record")
+        if row["selection_status"] != "APPROVED" or row["robots_status"] != "ALLOWED":
+            raise ValueError("Only approved robots-allowed targets can enter a live run")
         try:
             seed = canonical_url(row["seed_url"])
         except FetchError as exc:
             raise ValueError(f"Invalid seed URL for {row['site_id']}") from exc
         host = urlsplit(seed).hostname
-        if host not in row["allowed_hostnames"].split(";"):
+        allowed = row["allowed_hostnames"].split(";")
+        if host not in allowed or any(not item or item != item.strip() for item in allowed):
             raise ValueError("Seed hostname must be in the exact allowed-host list")
         if row["site_id"] in sites or host in hosts:
             raise ValueError("Sites and hostnames must be distinct across splits")
@@ -38,10 +46,21 @@ def validate_rows(rows: list[dict]) -> dict:
         try:
             budget = int(row["max_http_requests"])
             cost = float(row["max_provider_spend_usd"])
+            max_pages = int(row["max_pages"])
+            max_depth = int(row["max_depth"])
+            deadline = int(row["deadline_seconds"])
+            retention = int(row["retention_days"])
+            start = date.fromisoformat(row["date_window_start"])
+            end = date.fromisoformat(row["date_window_end"])
+            date.fromisoformat(row["robots_checked_at"])
         except (TypeError, ValueError) as exc:
-            raise ValueError("Request and spend limits must be numeric") from exc
-        if budget < 1 or cost < 0:
-            raise ValueError("Request and spend limits must be nonnegative")
+            raise ValueError("Invalid request, spend, retention or date value") from exc
+        if (not 1 <= max_pages <= 8 or not 0 <= max_depth <= 2 or not 2 <= deadline <= 45 or
+            not 1 <= budget <= 50 or budget < 5 * (max_pages + len(allowed)) or cost < 0 or
+            not 1 <= retention <= 7 or end < start or (end - start).days > 1):
+            raise ValueError("Target limits do not cover the worst-case redirect and robots budget")
+        if cost > 0 and row["provider_accounts"] == "NONE":
+            raise ValueError("Paid provider spend needs a named account")
         requests += budget
         spend += cost
     if splits != {"development": 12, "held_out": 12}:

@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "title": "One named paid plan per vendor",
+  "properties": {
+    "named_plan": {"type": "string", "title": "Plan"},
+    "listed_price": {"type": "number", "title": "Price"},
+    "currency": {"type": "string", "title": "Currency"},
+    "billing_period": {"type": "string", "title": "Billing period"},
+    "usage_or_seat_limit": {"type": "string", "title": "Usage limit"},
+    "support_channel": {"type": "string", "title": "Support"}
+  }
+}

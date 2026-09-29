@@ -10,6 +10,6 @@
   },
   "allowed_hostnames": [],
   "page_hints": [],
-  "options": {"max_pages": 1, "max_depth": 0, "deadline_seconds": 20},
+  "options": {"max_pages": 1, "max_depth": 0, "deadline_seconds": 20, "max_http_requests": 10},
   "idempotency_key": "approved-iana-com-smoke-1"
 }
