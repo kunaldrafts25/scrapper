@@ -32,6 +32,8 @@ def test_charset_policy_and_original_byte_hash(monkeypatch):
     assert encoding == "utf-8" and errors == 0 and "Café" in text
     text, encoding, errors = decode_html(b"<p>\xff</p>", "text/html; charset=utf-8")
     assert errors == 1 and "\ufffd" in text
+    text, encoding, errors = decode_html(raw, "text/html; charset=not-a-real-codec")
+    assert encoding == "cp1252" and "Café" in text
 
 
 def test_reproducible_locator_and_value_verification():

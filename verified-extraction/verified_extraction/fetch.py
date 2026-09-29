@@ -35,24 +35,26 @@ class Page:
 
 def decode_html(body: bytes, content_type: str) -> tuple[str, str, int]:
     """BOM, valid HTTP charset, valid HTML meta charset, then UTF-8."""
-    encoding = None
+    choices = []
     if body.startswith(codecs.BOM_UTF8):
-        encoding = "utf-8-sig"
+        choices.append("utf-8-sig")
     elif body.startswith(codecs.BOM_UTF16_LE) or body.startswith(codecs.BOM_UTF16_BE):
-        encoding = "utf-16"
-    if encoding is None:
+        choices.append("utf-16")
+    if not choices:
         match = re.search(r"charset\s*=\s*['\"]?([^;\s'\"]+)", content_type, re.I)
         if match:
-            encoding = match.group(1)
-    if encoding is None:
+            choices.append(match.group(1))
         head = body[:4096].decode("ascii", "ignore")
         match = re.search(r"<meta[^>]+charset\s*=\s*['\"]?([\w.-]+)", head, re.I)
         if match:
-            encoding = match.group(1)
-    try:
-        encoding = codecs.lookup(encoding or "utf-8").name
-    except LookupError:
-        encoding = "utf-8"
+            choices.append(match.group(1))
+    choices.append("utf-8")
+    for choice in choices:
+        try:
+            encoding = codecs.lookup(choice).name
+            break
+        except LookupError:
+            continue
     try:
         text = body.decode(encoding, "strict")
         errors = 0
