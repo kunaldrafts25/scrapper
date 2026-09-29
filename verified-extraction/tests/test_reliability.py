@@ -4,7 +4,6 @@ import subprocess
 import sys
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -103,17 +102,6 @@ def test_claim_heartbeat_prevents_takeover():
     path.unlink()
 
 
-def test_pacing_reservations_coordinate_separate_instances():
-    path = Path(f"test-{uuid.uuid4().hex}.db")
-    a, b = HostPacer(str(path)), HostPacer(str(path))
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        waits = list(pool.map(lambda pacer: pacer.reserve("example.com", 1.25), (a, b)))
-    assert min(waits) < 0.2
-    assert max(waits) >= 1.0
-    assert b.reserve("other.example", 0.5) < 0.2
-    path.unlink()
-
-
 def test_cross_process_host_requests_do_not_overlap_and_space_actual_starts():
     path = Path(f"test-pacing-{uuid.uuid4().hex}.db")
     files = []
@@ -126,23 +114,18 @@ def test_cross_process_host_requests_do_not_overlap_and_space_actual_starts():
 
 
 def _check_cross_process_pacing(path, files):
-    worker = ("import json,sys,time; from verified_extraction.pacing import HostPacer; "
-              "p=HostPacer(sys.argv[1])\n"
-              "with p.request('example.com',float(sys.argv[3]),time.monotonic()+6) as started:\n"
-              "  begin=started(); time.sleep(float(sys.argv[4])); end=time.time(); "
-              "  open(sys.argv[2],'w').write(json.dumps({'start':begin,'finish':end}))")
     def pair(hold, delay):
         pair_files = [Path(f"test-pacing-{uuid.uuid4().hex}.json") for _ in range(2)]
         files.extend(pair_files)
-        processes = [subprocess.Popen([sys.executable, "-c", worker, str(path), str(file),
+        processes = [subprocess.Popen([sys.executable, "-m", "tests.offline_host_worker", str(path), str(file),
                          str(delay), str(hold)]) for file in pair_files]
         for process in processes:
             assert process.wait(timeout=8) == 0
         first, second = sorted((json.loads(file.read_text()) for file in pair_files), key=lambda row: row["start"])
         assert second["start"] >= first["finish"] - 0.005
-        assert second["start"] - first["start"] >= delay - 0.02
-    pair(0.35, 0.2)
-    pair(0.04, 0.3)
+        assert second["start"] - first["start"] >= max(0.5, delay) - 0.03
+    pair(0.65, 0.2)
+    pair(0.04, 0.8)
 
 
 def test_dead_worker_host_lease_recovers():
@@ -174,3 +157,39 @@ def _check_dead_worker_recovery(path):
         if process.poll() is None:
             process.kill()
             process.wait(timeout=3)
+
+
+def test_http_budget_counts_robots_and_redirect_requests_offline(monkeypatch):
+    from verified_extraction import fetch
+    path = Path(f"test-pacing-{uuid.uuid4().hex}.db")
+    monkeypatch.setenv("VE_DB", str(path))
+    monkeypatch.setattr(fetch, "resolve_public", lambda host, port: "203.0.113.1")
+    calls = []
+    class Response:
+        status = 200
+        def getheaders(self):
+            return [("Content-Type", "text/html")]
+        def read(self, size):
+            return b"ok"
+    class Connection:
+        def __init__(self, *args):
+            pass
+        def connect(self):
+            pass
+        def request(self, method, path, headers):
+            calls.append(path)
+        def getresponse(self):
+            return Response()
+        def close(self):
+            pass
+    monkeypatch.setattr(fetch, "PinnedHTTPS", Connection)
+    try:
+        agent = fetch.HTTPFetcher({"example.com"}, time.monotonic() + 3, max_http_requests=1)
+        agent._request("https://example.com/robots.txt")
+        with pytest.raises(FetchError, match="ceiling") as error:
+            agent._request("https://example.com/page")
+        assert error.value.code == "REQUEST_BUDGET"
+        assert calls == ["/robots.txt"]
+        assert agent.http_requests_started == 1
+    finally:
+        path.unlink(missing_ok=True)

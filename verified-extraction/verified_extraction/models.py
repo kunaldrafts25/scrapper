@@ -9,6 +9,7 @@ class CrawlOptions(BaseModel):
     max_pages: int = Field(default=3, ge=1, le=8)
     max_depth: int = Field(default=1, ge=0, le=2)
     deadline_seconds: int = Field(default=20, ge=2, le=45)
+    max_http_requests: int = Field(default=20, ge=1, le=50)
 
 
 class JobRequest(BaseModel):
@@ -93,8 +94,8 @@ class FieldResult(BaseModel):
 
 
 class Result(BaseModel):
-    schema_version: str = "1.1"
-    extraction_version: str = "0.3.0"
+    schema_version: str = "1.2"
+    extraction_version: str = "0.4.0"
     job_id: str
     status: Literal["complete", "partial", "failed"]
     requested_url: str

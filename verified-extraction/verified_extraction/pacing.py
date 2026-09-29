@@ -80,14 +80,3 @@ class HostPacer:
             thread.join(timeout=1)
             with closing(sqlite3.connect(self.path, timeout=1)) as db, db:
                 db.execute("UPDATE host_pacing SET owner=NULL,lease_until=0 WHERE host=? AND owner=?", (host, owner))
-
-    def reserve(self, host: str, delay: float) -> float:
-        """Reserve a request start time; return seconds to wait before sending."""
-        with closing(sqlite3.connect(self.path, timeout=10)) as db, db:
-            db.execute("BEGIN IMMEDIATE")
-            now = time.time()
-            row = db.execute("SELECT next_at FROM host_pacing WHERE host=?", (host,)).fetchone()
-            slot = max(now, row[0]) if row else now
-            db.execute("INSERT INTO host_pacing(host,next_at) VALUES(?,?) ON CONFLICT(host) DO UPDATE SET next_at=excluded.next_at",
-                       (host, slot + max(0.5, delay)))
-        return max(0.0, slot - time.time())

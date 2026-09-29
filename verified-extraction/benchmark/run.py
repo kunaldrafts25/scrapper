@@ -156,10 +156,27 @@ def score(cases: list[dict]) -> dict:
             fields = {name: {"expected": expected, "actual_state": "failed", "actual_value": None,
                 "actual_unit": None, "actual_currency": None, "evidence_valid": None, "correct": False}
                 for name, expected in case["expected"].items()}
+        reviewed_row_correct = bool(case.get("plan_name")) and all(
+            item["expected"]["state"] == "verified" and item["actual_state"] == "verified" and item["correct"]
+            for item in fields.values())
         rows.append({"id": case["id"], "site": case["site"], "split": case["split"],
                      "category": case["category"], "latency_seconds": duration, "failure": failure,
+                     "access_failure_codes": [item["code"] for item in result["errors"] if item["code"] in
+                         {"ACCESS_DENIED", "ROBOTS_DENIED", "ROBOTS_UNAVAILABLE", "PRIVATE_TARGET", "OUT_OF_SCOPE"}]
+                         if result else [],
                      "fields": fields, "result_status": result["status"] if result else None,
+                     "reviewed_row_correct": reviewed_row_correct,
                      "review_seconds": case.get("review_seconds"),
+                     "blind_label_seconds": case.get("blind_label_seconds"),
+                     "live_elapsed_seconds": case.get("live_elapsed_seconds"),
+                     "http_requests_started": case.get("http_requests_started"),
+                     "manual_baseline_seconds": case.get("manual_baseline_seconds"),
+                     "manual_baseline_errors": case.get("manual_baseline_errors"),
+                     "manual_baseline_fields": case.get("manual_baseline_fields"),
+                     "plan_name": case.get("plan_name"), "code_revision": case.get("code_revision"),
+                     "independent_labels": case.get("independent_labels"),
+                     "manual_baseline": case.get("manual_baseline"),
+                     "assisted_reviews": case.get("assisted_reviews"),
                      "estimated_internal_cost_usd": result["usage"].get("estimated_internal_cost_usd") if result else None,
                      "raw_result": result})
     return {"per_case": rows, "summary": summarize(rows),
@@ -192,16 +209,39 @@ def bootstrap_interval(rows: list[dict]) -> dict:
 def summarize(rows: list[dict]) -> dict:
     counts = {key: 0 for key in ("fields", "expected_values", "accepted", "correct_accepted", "incorrect_accepted",
                                  "missed_values", "abstentions", "expected_conflicts", "detected_conflicts",
-                                 "evidence_checked", "evidence_valid", "failures")}
+                                 "evidence_checked", "evidence_valid", "failures", "access_failures",
+                                 "reviewed_rows_correct")}
     elapsed = 0.0
     review_seconds = 0.0
     reviewed_cases = 0
+    baseline_cases = baseline_fields = baseline_errors = 0
+    baseline_seconds = live_seconds = 0.0
+    live_cases = 0
+    http_requests = 0
+    paired_cases = 0
+    paired_baseline_seconds = paired_assisted_seconds = 0.0
     for row in rows:
         elapsed += row["latency_seconds"]
         if row.get("review_seconds") is not None:
             review_seconds += row["review_seconds"]
             reviewed_cases += 1
+        if row.get("manual_baseline_seconds") is not None:
+            baseline_cases += 1
+            baseline_seconds += row["manual_baseline_seconds"]
+            baseline_fields += row["manual_baseline_fields"]
+            baseline_errors += row["manual_baseline_errors"]
+        if row.get("live_elapsed_seconds") is not None:
+            live_cases += 1
+            live_seconds += row["live_elapsed_seconds"]
+        if row.get("http_requests_started") is not None:
+            http_requests += row["http_requests_started"]
+        if row.get("manual_baseline_seconds") is not None and row.get("review_seconds") is not None:
+            paired_cases += 1
+            paired_baseline_seconds += row["manual_baseline_seconds"]
+            paired_assisted_seconds += row["review_seconds"]
         counts["failures"] += row["failure"] is not None
+        counts["access_failures"] += bool(row.get("access_failure_codes"))
+        counts["reviewed_rows_correct"] += bool(row.get("reviewed_row_correct"))
         for field in row["fields"].values():
             counts["fields"] += 1
             expected_value = field["expected"]["state"] == "verified"
@@ -228,8 +268,18 @@ def summarize(rows: list[dict]) -> dict:
         "evidence_validity": ratio(counts["evidence_valid"], counts["evidence_checked"]),
         "mean_latency_seconds": ratio(elapsed, len(rows)),
         "failure_rate": ratio(counts["failures"], len(rows)),
+        "access_failure_rate": ratio(counts["access_failures"], len(rows)),
         "reviewed_cases": reviewed_cases,
         "review_minutes_per_correct_accepted_field": ratio(review_seconds / 60, counts["correct_accepted"]) if reviewed_cases else None,
+        "manual_baseline_cases": baseline_cases,
+        "manual_baseline_minutes_per_site": ratio(baseline_seconds / 60, baseline_cases),
+        "manual_baseline_error_rate": ratio(baseline_errors, baseline_fields),
+        "manual_baseline_errors": baseline_errors, "manual_baseline_fields": baseline_fields,
+        "paired_review_cases": paired_cases,
+        "paired_assisted_time_reduction": ratio(paired_baseline_seconds - paired_assisted_seconds,
+                                                 paired_baseline_seconds),
+        "mean_live_latency_seconds": ratio(live_seconds, live_cases),
+        "live_latency_cases": live_cases, "http_requests_started": http_requests if live_cases else None,
         "setup_review_time_minutes": None, "cost_per_accepted_field_usd": None}
 
 

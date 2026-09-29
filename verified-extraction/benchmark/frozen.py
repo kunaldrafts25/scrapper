@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 from verified_extraction.extract import visible_blocks, parse_scalar
@@ -12,13 +13,15 @@ from verified_extraction.store import Store
 
 
 def export_local(store: Store, tenant: str, job_id: str, output: Path, site_id: str,
-                 split: str, category: str, permission_note: str) -> dict:
+                 split: str, category: str, plan_name: str, permission_note: str) -> dict:
     result = store.get(tenant, job_id)
     request = store.get_request(tenant, job_id)
     if not result or not request:
         raise ValueError("Job or stored request is unavailable; older jobs need a new approved capture")
-    if split not in {"development", "held_out"} or not permission_note.strip():
-        raise ValueError("Split and permission note are required")
+    if split not in {"development", "held_out"} or not permission_note.strip() or not plan_name.strip():
+        raise ValueError("Split, named plan and permission note are required")
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"],
+        cwd=Path(__file__).resolve().parents[1], text=True).strip()
     output.mkdir(parents=True, exist_ok=False)
     captures_dir = output / "captures"
     captures_dir.mkdir()
@@ -46,7 +49,9 @@ def export_local(store: Store, tenant: str, job_id: str, output: Path, site_id: 
         "options": request.get("options", {}), "page_hints": request.get("page_hints", []),
         "allowed_hostnames": request.get("allowed_hostnames", []),
         "capture_date": result["observed_at"], "permission_note": permission_note,
-        "source_job_id": job_id, "pages": pages}
+        "source_job_id": job_id, "pages": pages, "plan_name": plan_name,
+        "code_revision": revision, "live_elapsed_seconds": result["usage"].get("elapsed_seconds"),
+        "http_requests_started": result["usage"].get("http_requests_started")}
     template = {"label_schema_version": "1.1", "site_id": site_id, "split": split,
         "labeling_mode": "blind", "reviewer_id": None,
         "fields": {name: {"state": None, "value": None, "unit": None, "currency": None,
@@ -55,6 +60,13 @@ def export_local(store: Store, tenant: str, job_id: str, output: Path, site_id: 
                           "reviewer_time_seconds": None} for name in request["schema"]["properties"]}}
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     (output / "labels.template.json").write_text(json.dumps(template, indent=2, ensure_ascii=False), encoding="utf-8")
+    baseline = {"baseline_schema_version": "1.0", "site_id": site_id, "analyst_id": None,
+        "elapsed_seconds": None, "fields": {name: {"state": None, "value": None,
+            "unit": None, "currency": None, "source_url": None, "snapshot_hash": None,
+            "excerpt": None}
+            for name in request["schema"]["properties"]}}
+    (output / "manual_baseline.template.json").write_text(
+        json.dumps(baseline, indent=2, ensure_ascii=False), encoding="utf-8")
     if split == "held_out":
         adjudication = {"adjudication_schema_version": "1.0", "site_id": site_id,
             "reviewer_id": None, "fields": {name: {"decision": None, "reason": None,
@@ -97,7 +109,8 @@ def _validate_labels(manifest: dict, labels: dict) -> dict:
         label = properties[name].get("title") or name.replace("_", " ")
         label_pos = excerpt.casefold().find(label.casefold())
         value_pos = excerpt.find(item["raw_value"])
-        if label_pos < 0 or value_pos < label_pos + len(label):
+        tail = excerpt[label_pos + len(label):].strip().lstrip(":-– ").strip() if label_pos >= 0 else ""
+        if label_pos < 0 or value_pos < label_pos + len(label) or tail != item["raw_value"]:
             raise ValueError(f"Field {name} value is not tied to its label in the excerpt")
         parsed = parse_scalar(item["raw_value"], properties[name]["type"])
         if parsed is None or parsed != (item["value"], item.get("unit"), item.get("currency")):
@@ -150,7 +163,9 @@ def load_labeled_case(manifest_path: Path, labels_path: Path) -> dict:
             if choice not in {"agree", "select_a", "select_b", "resolved"}:
                 raise ValueError(f"Field {name} has no adjudication decision")
             if choice == "agree":
-                if left[name] != right[name]:
+                first_claim = {key: value for key, value in first["fields"][name].items() if key != "reviewer_time_seconds"}
+                second_claim = {key: value for key, value in second["fields"][name].items() if key != "reviewer_time_seconds"}
+                if first_claim != second_claim:
                     raise ValueError(f"Field {name} disagrees and cannot be marked agreed")
                 expected[name] = left[name]
             else:
@@ -167,19 +182,59 @@ def load_labeled_case(manifest_path: Path, labels_path: Path) -> dict:
             seconds = decision.get("time_spent_seconds")
             if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds < 0:
                 raise ValueError(f"Field {name} needs adjudication time")
-        review_seconds = sum(float(item["reviewer_time_seconds"]) for item in first["fields"].values()) + \
+        blind_label_seconds = sum(float(item["reviewer_time_seconds"]) for item in first["fields"].values()) + \
             sum(float(item["reviewer_time_seconds"]) for item in second["fields"].values()) + \
             sum(float(item["time_spent_seconds"]) for item in adjudication["fields"].values())
         label_a, label_b = first, second
     else:
         labels = json.loads(labels_path.read_text(encoding="utf-8"))
         expected = _validate_labels(manifest, labels)
-        review_seconds = sum(float(item["reviewer_time_seconds"]) for item in labels["fields"].values())
+        blind_label_seconds = sum(float(item["reviewer_time_seconds"]) for item in labels["fields"].values())
         label_a, label_b, adjudication = labels, None, None
+    assisted_path = manifest_path.with_name("assisted_reviews.json")
+    assisted = None
+    assisted_seconds = None
+    if assisted_path.exists():
+        assisted = json.loads(assisted_path.read_text(encoding="utf-8"))
+        if (assisted.get("label_schema_version") != "1.1" or
+            assisted.get("job_id") != manifest.get("source_job_id") or
+            not isinstance(assisted.get("review_sessions"), list)):
+            raise ValueError("Assisted review export does not match the frozen job")
+        sessions = assisted["review_sessions"]
+        if any(row.get("stopped_at") is None or not isinstance(row.get("elapsed_seconds"), (int, float)) or
+               row["elapsed_seconds"] < 0 for row in sessions):
+            raise ValueError("Assisted review sessions must be complete")
+        ordered = sorted(sessions, key=lambda row: row["started_at"])
+        if any(second["started_at"] < first["stopped_at"] for first, second in zip(ordered, ordered[1:])):
+            raise ValueError("Assisted review sessions overlap")
+        assisted_seconds = sum(row["elapsed_seconds"] for row in sessions)
+    baseline_path = manifest_path.with_name("manual_baseline.json")
+    baseline_seconds = baseline_errors = baseline_fields = None
+    baseline = None
+    if baseline_path.exists():
+        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+        seconds = baseline.get("elapsed_seconds")
+        if (baseline.get("baseline_schema_version") != "1.0" or
+            baseline.get("site_id") != manifest["site_id"] or not baseline.get("analyst_id") or
+            isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds <= 0 or
+            set(baseline.get("fields", {})) != set(expected)):
+            raise ValueError("Manual baseline needs a separate analyst, elapsed time and every field")
+        baseline_seconds = seconds
+        baseline_fields = len(expected)
+        baseline_errors = sum(any(baseline["fields"][name].get(key) != label.get(key)
+                                  for key in ("state", "value", "unit", "currency", "source_url", "snapshot_hash", "excerpt"))
+                              for name, label in expected.items())
     site = manifest["site_id"]
     return {"id": site, "site": site, "split": manifest["split"], "category": manifest["category"],
         "seed": manifest["seed"], "schema": manifest["schema"], "options": manifest["options"],
         "page_hints": manifest["page_hints"], "allowed_hostnames": manifest["allowed_hostnames"],
-        "pages": manifest["pages"], "expected": expected, "review_seconds": review_seconds,
-        "permission_note": manifest["permission_note"], "independent_labels": {
+        "pages": manifest["pages"], "expected": expected, "review_seconds": assisted_seconds,
+        "blind_label_seconds": blind_label_seconds, "assisted_reviews": assisted,
+        "permission_note": manifest["permission_note"],
+        "plan_name": manifest.get("plan_name"), "code_revision": manifest.get("code_revision"),
+        "live_elapsed_seconds": manifest.get("live_elapsed_seconds"),
+        "http_requests_started": manifest.get("http_requests_started"),
+        "manual_baseline_seconds": baseline_seconds, "manual_baseline_errors": baseline_errors,
+        "manual_baseline_fields": baseline_fields, "manual_baseline": baseline,
+        "independent_labels": {
             "reviewer_a": label_a, "reviewer_b": label_b, "adjudication": adjudication}}

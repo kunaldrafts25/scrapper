@@ -39,6 +39,8 @@ class Store:
                 elapsed_seconds REAL);
             CREATE UNIQUE INDEX IF NOT EXISTS one_active_review_per_job
                 ON review_sessions(tenant,job_id) WHERE stopped_at IS NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS one_active_review_per_reviewer
+                ON review_sessions(tenant,reviewer_id) WHERE stopped_at IS NULL;
             CREATE TABLE IF NOT EXISTS review_history(id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tenant TEXT NOT NULL, job_id TEXT NOT NULL, field_name TEXT NOT NULL,
                 review_json TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -168,9 +170,9 @@ class Store:
     def start_review(self, tenant: str, job_id: str, field_name: str, reviewer_id: str):
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
-            if db.execute("SELECT 1 FROM review_sessions WHERE tenant=? AND job_id=? AND stopped_at IS NULL",
-                          (tenant, job_id)).fetchone():
-                raise ValueError("Another field review is active")
+            if db.execute("SELECT 1 FROM review_sessions WHERE tenant=? AND stopped_at IS NULL AND (job_id=? OR reviewer_id=?)",
+                          (tenant, job_id, reviewer_id)).fetchone():
+                raise ValueError("Another field review is active for this job or reviewer")
             started = self.clock()
             db.execute("INSERT INTO review_sessions(tenant,job_id,field_name,reviewer_id,started_at) VALUES(?,?,?,?,?)",
                        (tenant, job_id, field_name, reviewer_id, started))

@@ -91,11 +91,13 @@ class HTTPFetcher:
     _host_locks: dict[str, threading.Lock] = {}
     _last_request: dict[str, float] = {}
 
-    def __init__(self, allowed: set[str], deadline: float):
+    def __init__(self, allowed: set[str], deadline: float, max_http_requests: int = 20):
         self.allowed = allowed
         self.deadline = deadline
         self.robots: dict[str, RobotFileParser] = {}
         self.pacer = HostPacer(os.environ.get("VE_DB", "data/verified_extraction.sqlite3"))
+        self.max_http_requests = max_http_requests
+        self.http_requests_started = 0
 
     def _request(self, url: str) -> tuple[int, dict[str, str], bytes]:
         p = urlsplit(check_scope(url, self.allowed))
@@ -119,7 +121,13 @@ class HTTPFetcher:
             raise FetchError("DEADLINE", "Job deadline reached")
         conn = conn_type(p.hostname, ip, port, min(8.0, remaining))
         try:
+            if self.http_requests_started >= self.max_http_requests:
+                raise FetchError("REQUEST_BUDGET", "Approved HTTP request ceiling reached")
+            conn.connect()
+            if time.monotonic() >= self.deadline:
+                raise FetchError("DEADLINE", "Job deadline reached")
             mark_started()
+            self.http_requests_started += 1
             conn.request("GET", p.path + ("?" + p.query if p.query else ""),
                          headers={"Host": p.netloc, "User-Agent": USER_AGENT, "Accept": "text/html,text/plain;q=0.8", "Connection": "close"})
             response = conn.getresponse()

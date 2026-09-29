@@ -31,7 +31,7 @@ def test_frozen_bundle_requires_independent_source_labels():
     bundle = root / "site"
     try:
         manifest = export_local(store, "tenant", result.job_id, bundle, "frozen.example",
-                                "development", "static", "synthetic fixture authored locally")
+                                "development", "static", "Test Plan", "synthetic fixture authored locally")
         template = json.loads((bundle / "labels.template.json").read_text(encoding="utf-8"))
         assert "machine_result" not in template
         labels_path = bundle / "labels.json"
@@ -55,8 +55,27 @@ def test_frozen_bundle_requires_independent_source_labels():
         case = load_labeled_case(bundle / "manifest.json", labels_path)
         report = score([case])
         assert report["summary"]["denominators"]["correct_accepted"] == 1
-        assert report["summary"]["review_minutes_per_correct_accepted_field"] == 0.25
+        assert report["summary"]["review_minutes_per_correct_accepted_field"] is None
+        assert case["blind_label_seconds"] == 15
+        assisted = {"label_schema_version": "1.1", "job_id": result.job_id,
+            "review_sessions": [{"started_at": 10, "stopped_at": 55, "elapsed_seconds": 45}]}
+        (bundle / "assisted_reviews.json").write_text(json.dumps(assisted), encoding="utf-8")
+        with_assisted = score([load_labeled_case(bundle / "manifest.json", labels_path)])
+        assert with_assisted["summary"]["review_minutes_per_correct_accepted_field"] == 0.75
         assert report["per_case"][0]["raw_result"] is not None
+        baseline = json.loads((bundle / "manual_baseline.template.json").read_text(encoding="utf-8"))
+        baseline["analyst_id"] = "manual-analyst"
+        baseline["elapsed_seconds"] = 90
+        for item in baseline["fields"].values():
+            item["state"] = "missing"
+        baseline["fields"]["support"].update({"state": "verified", "value": "Phone",
+            "source_url": evidence.source_url, "snapshot_hash": evidence.snapshot_hash,
+            "excerpt": evidence.excerpt})
+        (bundle / "manual_baseline.json").write_text(json.dumps(baseline), encoding="utf-8")
+        with_baseline = score([load_labeled_case(bundle / "manifest.json", labels_path)])
+        assert with_baseline["summary"]["manual_baseline_minutes_per_site"] == 1.5
+        assert with_baseline["summary"]["manual_baseline_errors"] == 1
+        assert with_baseline["summary"]["paired_assisted_time_reduction"] == 0.5
         manifest["pages"][request.url]["snapshot_hash"] = "0" * 64
         (bundle / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         with pytest.raises(ValueError, match="hash mismatch"):
@@ -107,7 +126,8 @@ def test_held_out_requires_two_blind_labels_and_audited_adjudication():
         (bundle / "adjudication.json").write_text(json.dumps(record))
         case = load_labeled_case(bundle / "manifest.json", bundle / "labels.json")
         assert case["expected"]["support"]["value"] == "Email"
-        assert case["review_seconds"] == 12
+        assert case["blind_label_seconds"] == 12
+        assert case["review_seconds"] is None
         assert case["independent_labels"]["reviewer_b"]["fields"]["support"]["state"] == "missing"
     finally:
         for file in bundle.iterdir():
@@ -125,3 +145,38 @@ def test_conflict_score_requires_labeled_source_binding():
     report = score([case])
     assert report["per_case"][0]["fields"]["plan_price"]["evidence_valid"]
     assert not report["per_case"][0]["fields"]["plan_price"]["correct"]
+
+
+def test_numeric_label_rejects_wrong_currency_or_period():
+    import base64
+    import hashlib
+    bundle = Path(f"test-labels-{uuid.uuid4().hex}")
+    bundle.mkdir()
+    try:
+        raw = b"<p>Price: $29/month</p>"
+        digest = hashlib.sha256(raw).hexdigest()
+        manifest = {"fixture_version": "real-1.1", "site_id": "price-site", "split": "development",
+            "category": "pricing", "seed": "https://price.example/", "schema": {"type": "object",
+                "properties": {"price": {"type": "number"}}}, "options": {},
+            "page_hints": [], "allowed_hostnames": [], "permission_note": "synthetic",
+            "pages": {"https://price.example/": {"raw_base64": base64.b64encode(raw).decode(),
+                "snapshot_hash": digest, "content_type": "text/html", "final_url": "https://price.example/"}}}
+        label = {"label_schema_version": "1.1", "site_id": "price-site", "split": "development",
+            "labeling_mode": "blind", "reviewer_id": "independent", "fields": {"price": {
+                "state": "verified", "value": 29, "unit": "month", "currency": "EUR",
+                "source_url": "https://price.example/", "snapshot_hash": digest,
+                "excerpt": "Price: $29/month", "raw_value": "$29/month", "judgment": "literal",
+                "reviewer_time_seconds": 4}}}
+        (bundle / "manifest.json").write_text(json.dumps(manifest))
+        (bundle / "labels.json").write_text(json.dumps(label))
+        with pytest.raises(ValueError, match="currency disagrees"):
+            load_labeled_case(bundle / "manifest.json", bundle / "labels.json")
+        label["fields"]["price"]["currency"] = "USD"
+        label["fields"]["price"]["unit"] = "year"
+        (bundle / "labels.json").write_text(json.dumps(label))
+        with pytest.raises(ValueError, match="unit or currency disagrees"):
+            load_labeled_case(bundle / "manifest.json", bundle / "labels.json")
+    finally:
+        for file in bundle.iterdir():
+            file.unlink()
+        bundle.rmdir()

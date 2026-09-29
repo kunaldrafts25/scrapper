@@ -29,7 +29,7 @@ def run_job(request: JobRequest, fetcher=None) -> tuple[Result, dict[str, Page]]
         parsed = canonical_url("https://" + name + "/")
         allowed.add(urlsplit(parsed).hostname)
     deadline = start + request.options.deadline_seconds
-    fetcher = fetcher or HTTPFetcher(allowed, deadline)
+    fetcher = fetcher or HTTPFetcher(allowed, deadline, request.options.max_http_requests)
     queue = [(seed, 0)]
     for hint in request.page_hints if request.options.max_depth >= 1 else []:
         try:
@@ -90,7 +90,8 @@ def run_job(request: JobRequest, fetcher=None) -> tuple[Result, dict[str, Page]]
     elapsed = round(time.monotonic() - start, 4)
     METRICS["jobs"] += 1
     METRICS["elapsed_seconds_total"] += elapsed
-    usage = {"pages_fetched": pages_fetched, "browser_renders": 0, "model_tokens": 0,
+    usage = {"pages_fetched": pages_fetched, "http_requests_started": getattr(fetcher, "http_requests_started", None),
+             "browser_renders": 0, "model_tokens": 0,
              "elapsed_seconds": elapsed, "estimated_internal_cost_usd": 0.0,
              "cost_note": "HTTP and local compute not metered in MVP"}
     result = Result(job_id=str(uuid.uuid4()), status=status, requested_url=seed,

@@ -7,6 +7,7 @@ from verified_extraction import api
 from verified_extraction.fetch import Page
 from verified_extraction.service import run_job
 from verified_extraction.store import Store
+import pytest
 
 
 def test_reviewer_labels_export_and_tenant_isolation(monkeypatch):
@@ -67,3 +68,17 @@ def test_reviewer_labels_export_and_tenant_isolation(monkeypatch):
     assert client.delete(f"/v1/jobs/{job_id}", headers=a).status_code == 200
     assert client.get(f"/v1/jobs/{job_id}/labels", headers=a).status_code == 404
     path.unlink()
+
+
+def test_reviewer_cannot_overlap_sessions_across_jobs():
+    path = Path(f"test-{uuid.uuid4().hex}.db")
+    store = Store(str(path))
+    store.clock = iter([10, 15, 20]).__next__
+    try:
+        store.start_review("tenant", "job-a", "support", "analyst")
+        with pytest.raises(ValueError, match="active"):
+            store.start_review("tenant", "job-b", "price", "analyst")
+        assert store.stop_review("tenant", "job-a", "support", "analyst")["elapsed_seconds"] == 5
+        store.start_review("tenant", "job-b", "price", "analyst")
+    finally:
+        path.unlink()

@@ -18,7 +18,7 @@ from .extract import source_node_for
 from .store import Store
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
-app = FastAPI(title="Verified Extraction", version="0.1.0")
+app = FastAPI(title="Verified Extraction", version="0.4.0")
 store = Store(os.environ.get("VE_DB", "data/verified_extraction.sqlite3"))
 
 
@@ -131,6 +131,9 @@ form.addEventListener('submit',async event=>{event.preventDefault();out.replaceC
  activeId=id;activeHeaders=headers;exportButton.disabled=false;
  const reviewResponse=await fetch('/v1/jobs/'+id+'/reviews',{headers,cache:'no-store'});
  const saved=reviewResponse.ok?await reviewResponse.json():{};
+ const historyResponse=await fetch('/v1/jobs/'+id+'/review-history',{headers,cache:'no-store'});
+ const history=historyResponse.ok?await historyResponse.json():{sessions:[]};
+ activeField=history.sessions.find(item=>item.stopped_at===null && item.reviewer_id===activeReviewer)?.field_name||'';
  const evidenceResponse=await fetch('/v1/jobs/'+id+'/review-evidence',{headers,cache:'no-store'});
  const evidenceMap=evidenceResponse.ok?await evidenceResponse.json():{};
  for(const [name,field] of Object.entries(job.fields)){
@@ -156,7 +159,7 @@ form.addEventListener('submit',async event=>{event.preventDefault();out.replaceC
   const timer=add(section,'p','Recorded seconds: '+(saved[name]?.time_spent_seconds||0));
   const startButton=add(section,'button','Start review'), stopButton=add(section,'button','Stop review');
   startButton.type='button';stopButton.type='button';
-  const save=add(section,'button','Save verdict'), status=add(section,'p','');save.type='button';
+  const save=add(section,'button','Save verdict'), status=add(section,'p',activeField===name?'Review session is active':'');save.type='button';
   startButton.addEventListener('click',async()=>{
    if(activeField){status.textContent='Stop the active field first';return;}
    const response=await fetch('/v1/jobs/'+id+'/reviews/'+encodeURIComponent(name)+'/start',
