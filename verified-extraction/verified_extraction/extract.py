@@ -15,15 +15,29 @@ def snapshot_hash(html: str) -> str:
     return hashlib.sha256(html.encode("utf-8")).hexdigest()
 
 
+def is_hidden(tag) -> bool:
+    for node in [tag, *tag.parents]:
+        if not getattr(node, "attrs", None):
+            continue
+        if node.has_attr("hidden") or str(node.get("aria-hidden", "")).lower() == "true":
+            return True
+        style = re.sub(r"\s+", "", str(node.get("style", "")).lower())
+        if re.search(r"(?:^|;)display:none(?:!important)?(?:;|$)", style):
+            return True
+        if re.search(r"(?:^|;)visibility:hidden(?:!important)?(?:;|$)", style):
+            return True
+        if re.search(r"(?:^|;)opacity:0(?:\.0+)?(?:!important)?(?:;|$)", style):
+            return True
+    return False
+
+
 def visible_blocks(html: str) -> list[tuple[str, str]]:
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "noscript", "template", "svg", "head"]):
         tag.decompose()
     blocks = []
     for tag in soup.find_all(["p", "li", "h1", "h2", "h3", "tr", "dt", "dd"]):
-        if tag.find_parent(style=re.compile(r"display\s*:\s*none|visibility\s*:\s*hidden", re.I)):
-            continue
-        if re.search(r"display\s*:\s*none|visibility\s*:\s*hidden", tag.get("style", ""), re.I):
+        if is_hidden(tag):
             continue
         value = tag.get_text(" ", strip=True)
         if value and len(value) <= 400:

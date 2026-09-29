@@ -106,7 +106,7 @@ class HTTPFetcher:
             return
         try:
             _, _, status, _, body = self._follow(key + "/robots.txt")
-            if status in (401, 403, 429) or status >= 500:
+            if status not in (200, 404):
                 raise FetchError("ROBOTS_UNAVAILABLE", "Robots policy unavailable")
             parser = RobotFileParser()
             parser.parse(body.decode("utf-8", "replace").splitlines() if status == 200 else [])

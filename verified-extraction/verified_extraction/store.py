@@ -19,6 +19,13 @@ class Store:
                 PRIMARY KEY(tenant,id), UNIQUE(tenant,idem));
             CREATE TABLE IF NOT EXISTS snapshots(tenant TEXT NOT NULL, job_id TEXT NOT NULL, hash TEXT NOT NULL,
                 html TEXT NOT NULL, PRIMARY KEY(tenant,job_id,hash));
+            CREATE TABLE IF NOT EXISTS claims(tenant TEXT NOT NULL, idem TEXT NOT NULL,
+                request_hash TEXT NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL,
+                PRIMARY KEY(tenant,idem));
+            CREATE TABLE IF NOT EXISTS tenant_metrics(tenant TEXT PRIMARY KEY, jobs INTEGER NOT NULL DEFAULT 0,
+                pages_fetched INTEGER NOT NULL DEFAULT 0, verified_fields INTEGER NOT NULL DEFAULT 0,
+                conflicting_fields INTEGER NOT NULL DEFAULT 0, missing_fields INTEGER NOT NULL DEFAULT 0,
+                blocked_fields INTEGER NOT NULL DEFAULT 0, unverified_fields INTEGER NOT NULL DEFAULT 0);
             """)
 
     @contextmanager
@@ -40,12 +47,50 @@ class Store:
             row = db.execute("SELECT request_hash,result FROM jobs WHERE tenant=? AND idem=?", (tenant, key)).fetchone()
         return (row[0], json.loads(row[1])) if row else None
 
+    def claim(self, tenant: str, key: str, request_hash: str) -> str:
+        """SQLite's write lock serializes claims across processes sharing this DB."""
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT request_hash,state FROM claims WHERE tenant=? AND idem=?", (tenant, key)).fetchone()
+            if row is None:
+                db.execute("INSERT INTO claims VALUES(?,?,?,?,?)", (tenant, key, request_hash, "pending",
+                    datetime.now(timezone.utc).isoformat()))
+                return "owner"
+            if row[0] != request_hash:
+                return "conflict"
+            return row[1]
+
+    def release_claim(self, tenant: str, key: str, request_hash: str):
+        with self._db() as db:
+            db.execute("DELETE FROM claims WHERE tenant=? AND idem=? AND request_hash=? AND state='pending'",
+                       (tenant, key, request_hash))
+
     def put(self, tenant: str, job_id: str, key: str, request_hash: str, result: dict, snapshots: dict[str, str]):
         with self._db() as db:
             db.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?)", (tenant, job_id, key, request_hash, json.dumps(result),
                 datetime.now(timezone.utc).isoformat()))
             db.executemany("INSERT INTO snapshots VALUES(?,?,?,?)",
                            [(tenant, job_id, digest, html) for digest, html in snapshots.items()])
+            db.execute("UPDATE claims SET state='complete' WHERE tenant=? AND idem=? AND request_hash=?",
+                       (tenant, key, request_hash))
+            counts = {state: sum(field["state"] == state for field in result.get("fields", {}).values())
+                      for state in ("verified", "conflicting", "missing", "blocked", "unverified")}
+            db.execute("""INSERT INTO tenant_metrics VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(tenant) DO UPDATE SET jobs=jobs+excluded.jobs,
+                pages_fetched=pages_fetched+excluded.pages_fetched,
+                verified_fields=verified_fields+excluded.verified_fields,
+                conflicting_fields=conflicting_fields+excluded.conflicting_fields,
+                missing_fields=missing_fields+excluded.missing_fields,
+                blocked_fields=blocked_fields+excluded.blocked_fields,
+                unverified_fields=unverified_fields+excluded.unverified_fields""",
+                (tenant, 1, result.get("usage", {}).get("pages_fetched", 0),
+                 counts["verified"], counts["conflicting"], counts["missing"], counts["blocked"], counts["unverified"]))
+
+    def metrics(self, tenant: str) -> dict:
+        with self._db() as db:
+            row = db.execute("SELECT jobs,pages_fetched,verified_fields,conflicting_fields,missing_fields,blocked_fields,unverified_fields FROM tenant_metrics WHERE tenant=?", (tenant,)).fetchone()
+        values = row or (0,) * 7
+        return dict(zip(("jobs", "pages_fetched", "verified_fields", "conflicting_fields", "missing_fields", "blocked_fields", "unverified_fields"), values), tenant_id=tenant)
 
     def get(self, tenant: str, job_id: str):
         self.purge_expired()
@@ -61,6 +106,8 @@ class Store:
 
     def delete(self, tenant: str, job_id: str):
         with self._db() as db:
+            db.execute("DELETE FROM claims WHERE tenant=? AND idem IN (SELECT idem FROM jobs WHERE tenant=? AND id=?)",
+                       (tenant, tenant, job_id))
             db.execute("DELETE FROM snapshots WHERE tenant=? AND job_id=?", (tenant, job_id))
             return db.execute("DELETE FROM jobs WHERE tenant=? AND id=?", (tenant, job_id)).rowcount > 0
 
@@ -69,3 +116,4 @@ class Store:
         with self._db() as db:
             db.execute("DELETE FROM snapshots WHERE (tenant,job_id) IN (SELECT tenant,id FROM jobs WHERE created_at < ?)", (cutoff,))
             db.execute("DELETE FROM jobs WHERE created_at < ?", (cutoff,))
+            db.execute("DELETE FROM claims WHERE created_at < ?", (cutoff,))

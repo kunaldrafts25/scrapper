@@ -4,17 +4,26 @@ import hmac
 import html
 import logging
 import os
-from fastapi import FastAPI, Header, HTTPException, Depends
+import time
+from fastapi import FastAPI, Header, HTTPException, Depends, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
 
 from .models import JobRequest
 from .security import FetchError
-from .service import run_job, METRICS
+from .service import run_job
 from .store import Store
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 app = FastAPI(title="Verified Extraction", version="0.1.0")
 store = Store(os.environ.get("VE_DB", "data/verified_extraction.sqlite3"))
+
+
+@app.exception_handler(RequestValidationError)
+def validation_error(request: Request, exc: RequestValidationError):
+    return JSONResponse(status_code=422, content={"detail": {"code": "INVALID_REQUEST",
+        "errors": [{"location": [str(part) for part in item["loc"]], "message": item["msg"]} for item in exc.errors()]}})
 
 
 def tenant(authorization: str | None = Header(default=None)) -> str:
@@ -37,18 +46,32 @@ def tenant(authorization: str | None = Header(default=None)) -> str:
 def create_job(request: JobRequest, tenant_id: str = Depends(tenant)):
     payload = request.model_dump(by_alias=True)
     fingerprint = store.request_hash(payload)
-    existing = store.by_key(tenant_id, request.idempotency_key)
-    if existing:
-        if existing[0] != fingerprint:
+    wait_until = time.monotonic() + request.options.deadline_seconds + 10
+    while True:
+        state = store.claim(tenant_id, request.idempotency_key, fingerprint)
+        if state == "conflict":
             raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
-        return existing[1]
+        if state == "complete":
+            existing = store.by_key(tenant_id, request.idempotency_key)
+            if existing:
+                return existing[1]
+            raise HTTPException(503, detail={"code": "INCOMPLETE_JOB"})
+        if state == "owner":
+            break
+        if time.monotonic() >= wait_until:
+            raise HTTPException(503, detail={"code": "JOB_IN_PROGRESS"})
+        time.sleep(0.05)
     try:
         result, snapshots = run_job(request)
+        output = result.model_dump()
+        store.put(tenant_id, result.job_id, request.idempotency_key, fingerprint, output, snapshots)
+        return output
     except FetchError as exc:
+        store.release_claim(tenant_id, request.idempotency_key, fingerprint)
         raise HTTPException(422, detail={"code": exc.code, "message": str(exc)})
-    output = result.model_dump()
-    store.put(tenant_id, result.job_id, request.idempotency_key, fingerprint, output, snapshots)
-    return output
+    except Exception:
+        store.release_claim(tenant_id, request.idempotency_key, fingerprint)
+        raise
 
 
 @app.get("/v1/jobs/{job_id}")
@@ -97,4 +120,4 @@ def delete_job(job_id: str, tenant_id: str = Depends(tenant)):
 
 @app.get("/v1/metrics")
 def metrics(tenant_id: str = Depends(tenant)):
-    return dict(METRICS)
+    return store.metrics(tenant_id)

@@ -31,7 +31,7 @@ def run_job(request: JobRequest, fetcher=None) -> tuple[Result, dict[str, str]]:
     deadline = start + request.options.deadline_seconds
     fetcher = fetcher or HTTPFetcher(allowed, deadline)
     queue = [(seed, 0)]
-    for hint in request.page_hints:
+    for hint in request.page_hints if request.options.max_depth >= 1 else []:
         try:
             from urllib.parse import urljoin
             hinted = canonical_url(urljoin(seed, hint))
