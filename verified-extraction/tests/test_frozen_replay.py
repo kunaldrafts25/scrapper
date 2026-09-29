@@ -6,7 +6,8 @@ import pytest
 
 from benchmark.frozen import export_local, load_labeled_case
 from benchmark.run import load_cases, score
-from verified_extraction.extract import snapshot_hash
+from verified_extraction.extract import snapshot_hash, dom_path
+from bs4 import BeautifulSoup
 from verified_extraction.fetch import Page
 from verified_extraction.models import JobRequest
 from verified_extraction.service import run_job
@@ -24,7 +25,8 @@ def test_frozen_bundle_requires_independent_source_labels():
         "options": {"max_pages": 1, "max_depth": 0, "deadline_seconds": 10}})
     class Fetcher:
         def fetch(self, url):
-            return Page(url, "<p>Support: Email</p>", "2026-01-01T00:00:00+00:00", [])
+            return Page(url, "<article><h3>Test Plan</h3><p>Support: Email</p></article>",
+                        "2026-01-01T00:00:00+00:00", [])
     result, captures = run_job(request, Fetcher())
     store.put("tenant", result.job_id, "one", store.request_hash(request.model_dump(by_alias=True)),
               result.model_dump(), captures, request_payload=request.model_dump(by_alias=True))
@@ -36,19 +38,25 @@ def test_frozen_bundle_requires_independent_source_labels():
         assert "machine_result" not in template
         labels_path = bundle / "labels.json"
         labels_path.write_text(json.dumps(template), encoding="utf-8")
-        with pytest.raises(ValueError, match="reviewer identity"):
+        with pytest.raises(ValueError, match="Blind labels"):
             load_labeled_case(bundle / "manifest.json", labels_path)
         template["reviewer_id"] = "independent-reviewer-1"
         for item in template["fields"].values():
             item["state"] = "missing"
             item["reviewer_time_seconds"] = 5
         evidence = result.fields["support"].evidence[0]
+        soup = BeautifulSoup(next(iter(captures.values())).html, "html.parser")
+        scope, plan_node, value_node = soup.select_one("article"), soup.select_one("h3"), soup.select_one("p")
+        source = {"source_url": evidence.source_url, "snapshot_hash": evidence.snapshot_hash,
+            "fetched_at": evidence.fetched_at, "scope_locator": dom_path(scope), "relation": "same_scope",
+            "raw_value": "Email", "nodes": [
+                {"role": "plan", "locator": dom_path(plan_node), "excerpt": "Test Plan"},
+                {"role": "value", "locator": dom_path(value_node), "excerpt": "Support: Email"}]}
         template["fields"]["support"].update({"state": "verified", "value": "Email",
-            "source_url": evidence.source_url, "snapshot_hash": evidence.snapshot_hash,
-            "excerpt": evidence.excerpt, "raw_value": "Email"})
+            "evidence": [source]})
         template["fields"]["support"]["value"] = "Phone"
         labels_path.write_text(json.dumps(template), encoding="utf-8")
-        with pytest.raises(ValueError, match="disagrees"):
+        with pytest.raises(ValueError, match="unsupported"):
             load_labeled_case(bundle / "manifest.json", labels_path)
         template["fields"]["support"]["value"] = "Email"
         labels_path.write_text(json.dumps(template), encoding="utf-8")
@@ -69,8 +77,7 @@ def test_frozen_bundle_requires_independent_source_labels():
         for item in baseline["fields"].values():
             item["state"] = "missing"
         baseline["fields"]["support"].update({"state": "verified", "value": "Phone",
-            "source_url": evidence.source_url, "snapshot_hash": evidence.snapshot_hash,
-            "excerpt": evidence.excerpt})
+            "evidence": [source]})
         (bundle / "manual_baseline.json").write_text(json.dumps(baseline), encoding="utf-8")
         with_baseline = score([load_labeled_case(bundle / "manifest.json", labels_path)])
         assert with_baseline["summary"]["manual_baseline_minutes_per_site"] == 1.5

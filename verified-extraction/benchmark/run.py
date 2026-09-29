@@ -15,6 +15,7 @@ from verified_extraction.fetch import Page, decode_html
 from verified_extraction.models import Candidate, Evidence, JobRequest
 from verified_extraction.security import FetchError
 from verified_extraction.service import run_job
+from .ground_truth import machine_evidence_in_scope
 
 SCHEMA = {"type": "object", "properties": {"plan_price": {"type": "number"},
     "usage_limit": {"type": "integer"}, "support": {"type": "string"}}}
@@ -128,27 +129,46 @@ def score(cases: list[dict]) -> dict:
                         correct = correct and actual.get("unit") == expected["unit"]
                     if "currency" in expected:
                         correct = correct and actual.get("currency") == expected["currency"]
-                    if "excerpt" in expected:
+                    if name == "listed_price" and expected.get("billing_period"):
+                        correct = correct and actual.get("unit") == expected["billing_period"]
+                    if "evidence" in expected:
+                        correct = correct and machine_evidence_in_scope(actual["evidence"], expected)
+                    elif "excerpt" in expected:
                         correct = correct and any(ev["excerpt"] == expected["excerpt"] and
                             ev["source_url"] == expected.get("source_url", case.get("seed", "https://" + case["site"] + "/")) and
                             ("snapshot_hash" not in expected or ev["snapshot_hash"] == expected["snapshot_hash"])
                             for ev in actual["evidence"])
                 if actual["state"] == "conflicting" and "candidates" in expected:
-                    remaining = list(actual["candidates"])
-                    for claim in expected["candidates"]:
-                        match = next((item for item in remaining if
-                            item["value"] == claim["value"] and
-                            item.get("unit") == claim.get("unit") and
-                            item.get("currency") == claim.get("currency") and
-                            item["evidence"]["excerpt"] == claim["excerpt"] and
-                            ("source_url" not in claim or item["evidence"]["source_url"] == claim["source_url"]) and
-                            ("snapshot_hash" not in claim or item["evidence"]["snapshot_hash"] == claim["snapshot_hash"])), None)
-                        if match is None:
-                            correct = False
-                            break
-                        remaining.remove(match)
+                    if expected["candidates"] and "evidence" in expected["candidates"][0]:
+                        remaining = list(actual["candidates"])
+                        correct = bool(evidence_valid)
+                        for claim in expected["candidates"]:
+                            match = next((item for item in remaining if
+                                item["value"] == claim["value"] and
+                                item.get("unit") == claim.get("unit") and
+                                item.get("currency") == claim.get("currency") and
+                                machine_evidence_in_scope([item["evidence"]], claim)), None)
+                            if match is None:
+                                correct = False
+                                break
+                            remaining.remove(match)
+                        correct = correct and not remaining
                     else:
-                        correct = bool(evidence_valid) and not remaining and len(actual["candidates"]) == len(expected["candidates"])
+                        remaining = list(actual["candidates"])
+                        for claim in expected["candidates"]:
+                            match = next((item for item in remaining if
+                                item["value"] == claim["value"] and
+                                item.get("unit") == claim.get("unit") and
+                                item.get("currency") == claim.get("currency") and
+                                item["evidence"]["excerpt"] == claim["excerpt"] and
+                                ("source_url" not in claim or item["evidence"]["source_url"] == claim["source_url"]) and
+                                ("snapshot_hash" not in claim or item["evidence"]["snapshot_hash"] == claim["snapshot_hash"])), None)
+                            if match is None:
+                                correct = False
+                                break
+                            remaining.remove(match)
+                        else:
+                            correct = bool(evidence_valid) and not remaining and len(actual["candidates"]) == len(expected["candidates"])
                 fields[name] = {"expected": expected, "actual_state": actual["state"], "actual_value": actual["value"],
                     "actual_unit": actual.get("unit"), "actual_currency": actual.get("currency"),
                     "evidence_valid": evidence_valid, "correct": bool(correct)}
@@ -179,7 +199,14 @@ def score(cases: list[dict]) -> dict:
                      "assisted_reviews": case.get("assisted_reviews"),
                      "estimated_internal_cost_usd": result["usage"].get("estimated_internal_cost_usd") if result else None,
                      "raw_result": result})
-    return {"per_case": rows, "summary": summarize(rows),
+    wrong_accepted = [{"site": row["site"], "field": name,
+                       "expected": field["expected"], "actual_value": field["actual_value"],
+                       "actual_unit": field["actual_unit"],
+                       "actual_currency": field["actual_currency"],
+                       "machine_evidence": row["raw_result"]["fields"][name]["evidence"]}
+                      for row in rows for name, field in row["fields"].items()
+                      if field["actual_state"] == "verified" and not field["correct"] and row["raw_result"]]
+    return {"per_case": rows, "summary": summarize(rows), "wrong_accepted_examples": wrong_accepted,
             "by_category": {category: summarize([row for row in rows if row["category"] == category])
                             for category in sorted({row["category"] for row in rows})},
             "site_bootstrap_95pct": bootstrap_interval(rows),
@@ -263,6 +290,8 @@ def summarize(rows: list[dict]) -> dict:
     return {"cases": len(rows), "denominators": counts,
         "field_precision": ratio(counts["correct_accepted"], counts["accepted"]),
         "field_recall": ratio(counts["correct_accepted"], counts["expected_values"]),
+        "accepted_claim_correctness": ratio(counts["correct_accepted"], counts["accepted"]),
+        "customer_task_recall": ratio(counts["correct_accepted"], counts["expected_values"]),
         "abstention_rate": ratio(counts["abstentions"], counts["fields"]),
         "conflict_detection": ratio(counts["detected_conflicts"], counts["expected_conflicts"]),
         "evidence_validity": ratio(counts["evidence_valid"], counts["evidence_checked"]),
