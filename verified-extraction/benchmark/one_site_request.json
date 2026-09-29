@@ -1,0 +1,15 @@
+{
+  "url": "https://www.iana.org/domains/root/db/com.html",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "whois_server": {"type": "string", "title": "WHOIS Server"},
+      "rdap_server": {"type": "string", "title": "RDAP Server"},
+      "email": {"type": "string", "title": "Email"}
+    }
+  },
+  "allowed_hostnames": [],
+  "page_hints": [],
+  "options": {"max_pages": 1, "max_depth": 0, "deadline_seconds": 20},
+  "idempotency_key": "approved-iana-com-smoke-1"
+}
