@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 
 from .models import JobRequest
 from .security import FetchError
-from .service import run_job
+from .worker import run_hard
 from .store import Store
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -47,9 +47,10 @@ def tenant(authorization: str | None = Header(default=None)) -> str:
 def create_job(request: JobRequest, tenant_id: str = Depends(tenant)):
     payload = request.model_dump(by_alias=True)
     fingerprint = store.request_hash(payload)
+    owner = __import__("uuid").uuid4().hex
     wait_until = time.monotonic() + request.options.deadline_seconds + 10
     while True:
-        state = store.claim(tenant_id, request.idempotency_key, fingerprint)
+        state = store.claim(tenant_id, request.idempotency_key, fingerprint, owner)
         if state == "conflict":
             raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
         if state == "complete":
@@ -63,15 +64,17 @@ def create_job(request: JobRequest, tenant_id: str = Depends(tenant)):
             raise HTTPException(503, detail={"code": "JOB_IN_PROGRESS"})
         time.sleep(0.05)
     try:
-        result, snapshots = run_job(request)
+        result, snapshots = run_hard(request, on_tick=lambda: store.renew_claim(
+            tenant_id, request.idempotency_key, fingerprint, owner))
         output = result.model_dump()
-        store.put(tenant_id, result.job_id, request.idempotency_key, fingerprint, output, snapshots)
+        store.put(tenant_id, result.job_id, request.idempotency_key, fingerprint, output, snapshots, owner=owner)
         return output
     except FetchError as exc:
-        store.release_claim(tenant_id, request.idempotency_key, fingerprint)
-        raise HTTPException(422, detail={"code": exc.code, "message": str(exc)})
+        store.release_claim(tenant_id, request.idempotency_key, fingerprint, owner)
+        status = 504 if exc.code == "DEADLINE" else 503 if exc.code in {"WORKER_FAILED", "CLAIM_LOST"} else 422
+        raise HTTPException(status, detail={"code": exc.code, "message": str(exc)})
     except Exception:
-        store.release_claim(tenant_id, request.idempotency_key, fingerprint)
+        store.release_claim(tenant_id, request.idempotency_key, fingerprint, owner)
         raise
 
 

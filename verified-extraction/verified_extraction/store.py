@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import time
 from .fetch import Page
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,8 @@ from pathlib import Path
 
 
 class Store:
+    LEASE_SECONDS = 4.0
+
     def __init__(self, path: str):
         self.path = path
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -32,6 +35,10 @@ class Store:
             for column, definition in (("raw", "BLOB"), ("encoding", "TEXT"), ("decoding_errors", "INTEGER")):
                 if column not in columns:
                     db.execute(f"ALTER TABLE snapshots ADD COLUMN {column} {definition}")
+            claim_columns = {row[1] for row in db.execute("PRAGMA table_info(claims)")}
+            for column, definition in (("owner", "TEXT"), ("lease_until", "REAL"), ("attempts", "INTEGER DEFAULT 1")):
+                if column not in claim_columns:
+                    db.execute(f"ALTER TABLE claims ADD COLUMN {column} {definition}")
 
     @contextmanager
     def _db(self):
@@ -52,27 +59,44 @@ class Store:
             row = db.execute("SELECT request_hash,result FROM jobs WHERE tenant=? AND idem=?", (tenant, key)).fetchone()
         return (row[0], json.loads(row[1])) if row else None
 
-    def claim(self, tenant: str, key: str, request_hash: str) -> str:
+    def claim(self, tenant: str, key: str, request_hash: str, owner: str = "legacy") -> str:
         """SQLite's write lock serializes claims across processes sharing this DB."""
         self.purge_expired()
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT request_hash,state FROM claims WHERE tenant=? AND idem=?", (tenant, key)).fetchone()
+            row = db.execute("SELECT request_hash,state,lease_until FROM claims WHERE tenant=? AND idem=?", (tenant, key)).fetchone()
             if row is None:
-                db.execute("INSERT INTO claims VALUES(?,?,?,?,?)", (tenant, key, request_hash, "pending",
-                    datetime.now(timezone.utc).isoformat()))
+                db.execute("INSERT INTO claims(tenant,idem,request_hash,state,created_at,owner,lease_until,attempts) VALUES(?,?,?,?,?,?,?,1)",
+                    (tenant, key, request_hash, "pending", datetime.now(timezone.utc).isoformat(),
+                     owner, time.time() + self.LEASE_SECONDS))
                 return "owner"
             if row[0] != request_hash:
                 return "conflict"
+            if row[1] == "pending" and (row[2] is None or row[2] < time.time()):
+                db.execute("UPDATE claims SET owner=?,lease_until=?,attempts=attempts+1 WHERE tenant=? AND idem=?",
+                           (owner, time.time() + self.LEASE_SECONDS, tenant, key))
+                return "owner"
             return row[1]
 
-    def release_claim(self, tenant: str, key: str, request_hash: str):
+    def renew_claim(self, tenant: str, key: str, request_hash: str, owner: str) -> bool:
         with self._db() as db:
-            db.execute("DELETE FROM claims WHERE tenant=? AND idem=? AND request_hash=? AND state='pending'",
-                       (tenant, key, request_hash))
+            return db.execute("UPDATE claims SET lease_until=? WHERE tenant=? AND idem=? AND request_hash=? AND owner=? AND state='pending'",
+                (time.time() + self.LEASE_SECONDS, tenant, key, request_hash, owner)).rowcount == 1
 
-    def put(self, tenant: str, job_id: str, key: str, request_hash: str, result: dict, snapshots: dict[str, Page | str]):
+    def release_claim(self, tenant: str, key: str, request_hash: str, owner: str = "legacy"):
         with self._db() as db:
+            db.execute("DELETE FROM claims WHERE tenant=? AND idem=? AND request_hash=? AND owner=? AND state='pending'",
+                       (tenant, key, request_hash, owner))
+
+    def put(self, tenant: str, job_id: str, key: str, request_hash: str, result: dict,
+            snapshots: dict[str, Page | str], owner: str | None = None):
+        with self._db() as db:
+            if owner is not None:
+                db.execute("BEGIN IMMEDIATE")
+                claim = db.execute("SELECT owner,state,request_hash FROM claims WHERE tenant=? AND idem=?",
+                                   (tenant, key)).fetchone()
+                if claim != (owner, "pending", request_hash):
+                    raise RuntimeError("CLAIM_LOST")
             db.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?)", (tenant, job_id, key, request_hash, json.dumps(result),
                 datetime.now(timezone.utc).isoformat()))
             db.executemany("INSERT INTO snapshots(tenant,job_id,hash,html,raw,encoding,decoding_errors) VALUES(?,?,?,?,?,?,?)",
@@ -81,7 +105,7 @@ class Store:
                              value.encoding if isinstance(value, Page) else "utf-8",
                              value.decoding_errors if isinstance(value, Page) else 0)
                             for digest, value in snapshots.items()])
-            db.execute("UPDATE claims SET state='complete' WHERE tenant=? AND idem=? AND request_hash=?",
+            db.execute("UPDATE claims SET state='complete',lease_until=NULL WHERE tenant=? AND idem=? AND request_hash=?",
                        (tenant, key, request_hash))
             counts = {state: sum(field["state"] == state for field in result.get("fields", {}).values())
                       for state in ("verified", "conflicting", "missing", "blocked", "unverified")}

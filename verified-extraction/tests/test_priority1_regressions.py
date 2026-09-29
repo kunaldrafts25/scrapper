@@ -108,7 +108,7 @@ def test_concurrent_idempotency_one_crawl(monkeypatch):
                 count += 1
             time.sleep(0.15)
             return Page(url, "<p>Support: Email</p>", "now", [])
-    monkeypatch.setattr(api, "run_job", lambda request: run_job(request, Fetcher()))
+    monkeypatch.setattr(api, "run_hard", lambda request, on_tick=None: run_job(request, Fetcher()))
     body = job(options={"max_pages": 1, "max_depth": 0, "deadline_seconds": 10}).model_dump(by_alias=True)
     def send(_):
         return TestClient(api.app).post("/v1/jobs", json=body, headers={"Authorization": "Bearer secret-a"})

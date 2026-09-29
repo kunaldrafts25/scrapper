@@ -7,12 +7,14 @@ import socket
 import ssl
 import time
 import threading
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
 from .security import FetchError, check_scope, resolve_public
+from .pacing import HostPacer
 
 USER_AGENT = "VerifiedExtractionMVP/0.1 (+local-review; respects robots.txt)"
 MAX_BYTES = 1_000_000
@@ -92,6 +94,7 @@ class HTTPFetcher:
         self.allowed = allowed
         self.deadline = deadline
         self.robots: dict[str, RobotFileParser] = {}
+        self.pacer = HostPacer(os.environ.get("VE_DB", "data/verified_extraction.sqlite3"))
 
     def _request(self, url: str) -> tuple[int, dict[str, str], bytes]:
         p = urlsplit(check_scope(url, self.allowed))
@@ -101,21 +104,25 @@ class HTTPFetcher:
             return self._request_locked(url, p)
 
     def _request_locked(self, url: str, p) -> tuple[int, dict[str, str], bytes]:
-        port = p.port or (443 if p.scheme == "https" else 80)
-        ip = resolve_public(p.hostname, port)
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise FetchError("DEADLINE", "Job deadline reached")
         parser = self.robots.get(self._robots_key(url))
         crawl_delay = parser.crawl_delay(USER_AGENT) if parser else None
-        wait = max(0.5, float(crawl_delay or 0)) - (time.monotonic() - self._last_request.get(p.hostname, 0))
+        wait = self.pacer.reserve(p.hostname, float(crawl_delay or 0))
         if wait > 0:
-            if wait >= remaining:
+            if wait >= self.deadline - time.monotonic():
                 raise FetchError("DEADLINE", "Job deadline reached")
             time.sleep(wait)
-        self._last_request[p.hostname] = time.monotonic()
+        if time.monotonic() >= self.deadline:
+            raise FetchError("DEADLINE", "Job deadline reached")
+        port = p.port or (443 if p.scheme == "https" else 80)
+        ip = resolve_public(p.hostname, port)
         conn_type = PinnedHTTPS if p.scheme == "https" else PinnedHTTP
-        conn = conn_type(p.hostname, ip, port, min(8.0, self.deadline - time.monotonic()))
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise FetchError("DEADLINE", "Job deadline reached")
+        conn = conn_type(p.hostname, ip, port, min(8.0, remaining))
         try:
             conn.request("GET", p.path + ("?" + p.query if p.query else ""),
                          headers={"Host": p.netloc, "User-Agent": USER_AGENT, "Accept": "text/html,text/plain;q=0.8", "Connection": "close"})

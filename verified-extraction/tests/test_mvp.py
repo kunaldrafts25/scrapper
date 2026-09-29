@@ -162,7 +162,7 @@ def test_api_auth_idempotency_review(monkeypatch):
     fixture = {"https://example.com/": "<p>Support: Email</p><p>Plan price: $29</p><p>Usage limit: 10</p>"}
     def fake_run(req):
         return run_job(req, FixtureFetcher(fixture))
-    monkeypatch.setattr(api, "run_job", fake_run)
+    monkeypatch.setattr(api, "run_hard", lambda req, on_tick=None: fake_run(req))
     client = TestClient(app)
     body = request(options={"max_pages": 1, "max_depth": 0, "deadline_seconds": 10}).model_dump(by_alias=True)
     auth = {"Authorization": "Bearer a-secret"}

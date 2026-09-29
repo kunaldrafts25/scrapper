@@ -71,7 +71,7 @@ def test_raw_capture_api_and_inert_review(monkeypatch):
     class Fetcher:
         def fetch(self, url):
             return Page(url, decoded, "now", [], raw, encoding, errors)
-    monkeypatch.setattr(api, "run_job", lambda req: run_job(req, Fetcher()))
+    monkeypatch.setattr(api, "run_hard", lambda req, on_tick=None: run_job(req, Fetcher()))
     body = {"url": "https://example.com/", "schema": SCHEMA, "idempotency_key": "one",
             "options": {"max_pages": 1, "max_depth": 0, "deadline_seconds": 10}}
     client = TestClient(api.app)
