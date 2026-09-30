@@ -22,6 +22,7 @@ a{color:#075d71}a:focus-visible,button:focus-visible,input:focus-visible,select:
 <aside class="rail" aria-label="Job controls">
 <section class="panel"><div class="panel-head"><h2>New extraction</h2><span class="hint">3–10 named scalar fields</span></div><form id="create-form" class="panel-body stack">
 <div class="field"><label for="url">Public page URL</label><input id="url" type="url" required placeholder="https://example.org/pricing" autocomplete="url"></div>
+<div class="field"><label for="target-plan">Named plan (optional)</label><input id="target-plan" maxlength="80" placeholder="Team"><span class="hint">Set this for plan-card or comparison-table claims.</span></div>
 <div class="field"><label for="key">Bearer key</label><input id="key" type="password" required autocomplete="off" spellcheck="false"><span class="hint">Held in this tab’s memory. Never included in a URL.</span></div>
 <div class="field"><label for="reviewer">Reviewer ID</label><input id="reviewer" required maxlength="80" autocomplete="off" placeholder="analyst-1"></div>
 <div><div class="status-line"><strong>Fields</strong><button id="add-field" class="btn quiet" type="button">+ Add field</button></div><p class="hint">Use the exact visible label on the page. Titles drive extraction.</p><div id="fields" class="stack"></div></div>
@@ -73,7 +74,7 @@ a{color:#075d71}a:focus-visible,button:focus-visible,input:focus-visible,select:
    controls();const properties={};
    for(const row of $('fields').children){const inputs=row.querySelectorAll('input');const key=inputs[0].value.trim(), title=inputs[1].value.trim();if(!/^[A-Za-z_][A-Za-z0-9_]{0,79}$/.test(key))throw new Error('Field keys use letters, digits, and underscores, starting with a letter or underscore.');if(!title)throw new Error('Each field needs a page label.');if(properties[key])throw new Error('Field keys must be unique.');properties[key]={type:row.querySelector('select').value,title};}
    if(Object.keys(properties).length<3||Object.keys(properties).length>10)throw new Error('Use 3–10 fields.');
-   const payload={url:$('url').value,schema:{type:'object',properties},allowed_hostnames:[],page_hints:[],options:{max_pages:Number($('max-pages').value),max_depth:Number($('max-depth').value),deadline_seconds:Number($('deadline').value),max_http_requests:Number($('max-gets').value)},idempotency_key:crypto.randomUUID()};
+   const payload={url:$('url').value,schema:{type:'object',properties},target_plan:$('target-plan').value.trim()||null,allowed_hostnames:[],page_hints:[],options:{max_pages:Number($('max-pages').value),max_depth:Number($('max-depth').value),deadline_seconds:Number($('deadline').value),max_http_requests:Number($('max-gets').value)},idempotency_key:crypto.randomUUID()};
    setBusy(true,'Fetching robots policy and pages. This may take up to the deadline…');
    const result=await api('/v1/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
    $('job').value=result.job_id;await load(result.job_id,result);

@@ -80,7 +80,7 @@ def run_job(request: JobRequest, fetcher=None) -> tuple[Result, dict[str, Page]]
                             "PRIVATE_TARGET", "OUT_OF_SCOPE"}:
                 blocked = True
                 break
-    fields = extract_fields(pages, request.schema_["properties"], blocked)
+    fields = extract_fields(pages, request.schema_["properties"], blocked, request.target_plan)
     for field in fields.values():
         METRICS[field.state + "_fields"] += 1
         if field.state == "unverified":

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+import os
 import time
 import threading
 import uuid
@@ -19,6 +20,7 @@ class HostPacer:
         self.path = path
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(path)) as db, db:
+            db.execute("BEGIN IMMEDIATE")
             db.execute("CREATE TABLE IF NOT EXISTS host_pacing(host TEXT PRIMARY KEY, next_at REAL NOT NULL)")
             columns = {row[1] for row in db.execute("PRAGMA table_info(host_pacing)")}
             if "owner" not in columns:
@@ -67,10 +69,16 @@ class HostPacer:
             if lost.is_set():
                 raise FetchError("HOST_LEASE_LOST", "Host request lease was lost")
             with closing(sqlite3.connect(self.path, timeout=0.5)) as db, db:
+                db.execute("BEGIN IMMEDIATE")
                 changed = db.execute("UPDATE host_pacing SET next_at=? WHERE host=? AND owner=? AND lease_until>?",
                                      (time.time() + max(0.5, delay), host, owner, time.time())).rowcount
-            if not changed:
-                raise FetchError("HOST_LEASE_LOST", "Host request lease was lost")
+                if not changed:
+                    raise FetchError("HOST_LEASE_LOST", "Host request lease was lost")
+                token = os.environ.get("VE_REQUEST_COUNT_TOKEN")
+                if token:
+                    updated = db.execute("UPDATE request_counts SET started=started+1 WHERE token=?", (token,)).rowcount
+                    if updated != 1:
+                        raise FetchError("COUNT_LEDGER_LOST", "Request counter was lost")
             return time.time()
 
         try:

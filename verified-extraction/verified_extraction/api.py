@@ -19,7 +19,7 @@ from .extract import source_node_for
 from .store import Store
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
-app = FastAPI(title="Verified Extraction", version="0.4.0")
+app = FastAPI(title="Verified Extraction", version="0.4.1")
 store = Store(os.environ.get("VE_DB", "data/verified_extraction.sqlite3"))
 
 
@@ -75,7 +75,8 @@ def create_job(request: JobRequest, tenant_id: str = Depends(tenant)):
     except FetchError as exc:
         store.release_claim(tenant_id, request.idempotency_key, fingerprint, owner)
         status = 504 if exc.code == "DEADLINE" else 503 if exc.code in {"WORKER_FAILED", "CLAIM_LOST"} else 422
-        raise HTTPException(status, detail={"code": exc.code, "message": str(exc)})
+        raise HTTPException(status, detail={"code": exc.code, "message": str(exc),
+                                            "http_requests_started": exc.http_requests_started})
     except Exception:
         store.release_claim(tenant_id, request.idempotency_key, fingerprint, owner)
         raise

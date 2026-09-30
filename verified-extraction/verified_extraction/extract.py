@@ -6,7 +6,7 @@ import re
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urljoin, urlsplit
 from bs4 import BeautifulSoup
-from bs4.element import Tag, NavigableString
+from bs4.element import Tag, NavigableString, Comment
 
 from .fetch import Page
 from .models import Candidate, Evidence, FieldResult
@@ -71,6 +71,163 @@ NUMBER = re.compile(r"^\s*(?P<currency>USD|EUR|GBP|INR|[$\u20ac\u00a3\u20b9])?\s
                     r"(?P<suffix>USD|EUR|GBP|INR|dollars)?\s*$", re.I)
 CURRENCY = {"$": "USD", "\u20ac": "EUR", "\u00a3": "GBP", "\u20b9": "INR", "dollars": "USD"}
 MAX_SAFE_JSON_INTEGER = 2**53 - 1
+MONEY = re.compile(r"(?<![\w])(?P<prefix>USD|EUR|GBP|INR)?\s*(?P<symbol>[$\u20ac\u00a3\u20b9])?\s*(?P<number>\d+(?:,\d{3})*(?:\.\d+)?)\s*(?P<code>USD|EUR|GBP|INR)?", re.I)
+PLAN_FIELDS = {"named_plan", "listed_price", "currency", "billing_period", "usage_or_seat_limit", "support_channel"}
+
+
+def _visible_text(tag: Tag) -> str:
+    parts = []
+    def visit(node):
+        if isinstance(node, Comment):
+            return
+        if isinstance(node, NavigableString):
+            if node.strip():
+                parts.append(str(node).strip())
+        elif isinstance(node, Tag) and node.name not in {"script", "style", "noscript", "template", "svg", "head"} and not is_hidden(node):
+            for child in node.children:
+                visit(child)
+    visit(tag)
+    return " ".join(" ".join(parts).split())
+
+
+def _price_node_text(tag: Tag) -> str | None:
+    text = _visible_text(tag)
+    if not 3 <= len(text) <= 180 or not re.search(r"\b(billed|per\s+(?:user|seat|member)|price)\b|/month|/year", text, re.I):
+        return None
+    match = MONEY.search(text)
+    if not match or not (match.group("prefix") or match.group("symbol") or match.group("code")):
+        return None
+    return text
+
+
+def _plan_scopes(soup: BeautifulSoup, target_plan: str):
+    seen = set()
+    for heading in soup.find_all(["h2", "h3", "h4"]):
+        if is_hidden(heading) or _visible_text(heading).casefold() != target_plan.casefold():
+            continue
+        for scope in heading.parents:
+            if not isinstance(scope, Tag) or scope.name in {"body", "html", "[document]"}:
+                break
+            text = _visible_text(scope)
+            if len(text) > 5000:
+                break
+            if MONEY.search(text) and any(_price_node_text(node) for node in scope.find_all(True)):
+                path = dom_path(scope)
+                if path not in seen:
+                    seen.add(path)
+                    yield scope, heading, None
+                break
+    for table in soup.find_all("table"):
+        if is_hidden(table):
+            continue
+        rows = table.find_all("tr")
+        if not rows:
+            continue
+        headers = rows[0].find_all(["th", "td"], recursive=False)
+        if any(cell.has_attr("colspan") or cell.has_attr("rowspan") for cell in headers):
+            continue
+        matches = [(index, cell) for index, cell in enumerate(headers)
+                   if _visible_text(cell).casefold() == target_plan.casefold()]
+        if len(matches) == 1:
+            index, plan_node = matches[0]
+            yield table, plan_node, index
+
+
+def _parse_price(text: str, kind: str):
+    match = MONEY.search(text)
+    if not match or not (match.group("prefix") or match.group("symbol") or match.group("code")):
+        return None
+    codes = set(re.findall(r"\b(?:USD|EUR|GBP|INR)\b", text, re.I))
+    currency = next(iter(codes)).upper() if len(codes) == 1 else None
+    if currency is None and match.group("symbol") in {"\u20ac", "\u00a3", "\u20b9"}:
+        currency = CURRENCY[match.group("symbol")]
+    if currency is None:
+        return None  # Dollar signs alone do not establish customer-task currency.
+    period = _billing_period(text)
+    if period is None:
+        return None
+    parsed = parse_scalar(match.group("number").replace(",", ""), kind)
+    if parsed is None:
+        return None
+    unit = "month" if re.search(r"/\s*month|per\s+(?:user|seat|member)\s*/\s*month", text, re.I) else None
+    return parsed[0], unit, currency, period, match.group(0).strip()
+
+
+def _billing_period(text: str) -> str | None:
+    billed = {item.lower() for item in re.findall(r"\bbilled\s+(monthly|yearly|annually)\b", text, re.I)}
+    if not billed or ("monthly" in text.lower() and
+                      ("yearly" in text.lower() or "annually" in text.lower())):
+        return None
+    return "year" if billed <= {"yearly", "annually"} else "month" if billed == {"monthly"} else None
+
+
+def plan_candidates(page: Page, name: str, spec: dict, target_plan: str) -> list[Candidate]:
+    """Use only local named-plan cards or one unspanned table column."""
+    if name not in PLAN_FIELDS:
+        return []
+    soup = BeautifulSoup(page.html, "html.parser")
+    digest = snapshot_hash(page)
+    output = []
+    for scope, plan_node, column in _plan_scopes(soup, target_plan):
+        def emit(node, raw, value, unit=None, currency=None, period=None):
+            output.append(Candidate(value=value, value_type=spec["type"], unit=unit, currency=currency,
+                billing_period=period, numeric_encoding=numeric_encoding(value, spec["type"]),
+                evidence=Evidence(source_url=page.url, fetched_at=page.fetched_at,
+                    snapshot_hash=digest, locator=dom_path(node)+"::plan-scope("+dom_path(scope)+")",
+                    excerpt=_visible_text(node), label=name, raw_value=raw,
+                    plan_name=target_plan, field_title=spec.get("title"))))
+        if name == "named_plan":
+            emit(plan_node, _visible_text(plan_node), target_plan)
+            continue
+        containers = []
+        if column is None:
+            containers = [scope]
+        else:
+            for row in scope.find_all("tr"):
+                cells = row.find_all(["td", "th"], recursive=False)
+                if len(cells) <= column or any(cell.has_attr("colspan") or cell.has_attr("rowspan") for cell in cells):
+                    continue
+                if name in {"listed_price", "currency", "billing_period"}:
+                    if re.search(r"\b(price|cost|rate)\b", _visible_text(cells[0]), re.I):
+                        containers.append(cells[column])
+                else:
+                    label = spec.get("title") or name.replace("_", " ")
+                    if _visible_text(cells[0]).casefold() == label.casefold():
+                        containers.append(cells[column])
+        if name in {"listed_price", "currency", "billing_period"}:
+            for container in containers:
+                for node in [container, *container.find_all(True)]:
+                    text = _price_node_text(node)
+                    if text is None or any(_price_node_text(child) == text for child in node.find_all(True)):
+                        continue
+                    if name == "billing_period":
+                        period = _billing_period(text)
+                        if period:
+                            emit(node, period, period)
+                        continue
+                    parsed = _parse_price(text, "number")
+                    if parsed is None:
+                        continue
+                    value, unit, currency, period, raw = parsed
+                    if name == "listed_price":
+                        emit(node, raw, value, unit, currency, period)
+                    elif name == "currency":
+                        emit(node, currency, currency)
+                    else:
+                        emit(node, period, period)
+        else:
+            label = spec.get("title") or name.replace("_", " ")
+            for container in containers:
+                for node in [container, *container.find_all(["p", "li", "div", "span", "td"])]:
+                    text = _visible_text(node)
+                    if len(text) > 180 or not (match := label_pattern(label).match(text)):
+                        continue
+                    if any(label_pattern(label).match(_visible_text(child)) for child in node.find_all(True)):
+                        continue
+                    parsed = parse_scalar(match.group(1), spec["type"])
+                    if parsed is not None:
+                        emit(node, match.group(1), *parsed)
+    return output
 
 
 def parse_scalar(raw: str, kind: str):
@@ -174,6 +331,16 @@ def verify_candidate(candidate: Candidate, source: Page | bytes | str) -> bool:
     ev = candidate.evidence
     if not ev.label or ev.raw_value is None or not candidate.value_type:
         return False
+    if "::plan-scope(" in ev.locator:
+        if not ev.plan_name or not isinstance(source, Page):
+            return False
+        regenerated = plan_candidates(source, ev.label,
+                                      {"type": candidate.value_type, "title": ev.field_title}, ev.plan_name)
+        return any(item.evidence.locator == ev.locator and item.evidence.excerpt == ev.excerpt and
+                   item.evidence.raw_value == ev.raw_value and item.value == candidate.value and
+                   item.unit == candidate.unit and item.currency == candidate.currency and
+                   item.billing_period == candidate.billing_period and
+                   item.numeric_encoding == candidate.numeric_encoding for item in regenerated)
     if "::item(" in ev.locator:
         try:
             script_path, item_part, key = ev.locator.split("::", 2)
@@ -209,23 +376,28 @@ def source_node_for(html: str, locator: str) -> str | None:
     return str(tag)[:4000] if tag is not None else None
 
 
-def extract_fields(pages: list[Page], properties: dict, blocked: bool) -> dict[str, FieldResult]:
+def extract_fields(pages: list[Page], properties: dict, blocked: bool,
+                   target_plan: str | None = None) -> dict[str, FieldResult]:
     output = {}
     for name, spec in properties.items():
-        raw = [candidate for page in pages for candidate in candidates_for(page, name, spec)]
+        raw = [candidate for page in pages for candidate in
+               (plan_candidates(page, name, spec, target_plan) if target_plan and name in PLAN_FIELDS
+                else candidates_for(page, name, spec))]
         good = [candidate for candidate in raw if any(page.url == candidate.evidence.source_url
             and verify_candidate(candidate, page) for page in pages)]
         relevant = [c for c in good if (not spec.get("x-unit") or c.unit == spec["x-unit"])
                     and (not spec.get("x-currency") or c.currency == spec["x-currency"])]
         unique = {}
         for candidate in relevant:
-            key = json.dumps([candidate.value, candidate.unit, candidate.currency], sort_keys=True)
+            key = json.dumps([candidate.value, candidate.unit, candidate.currency,
+                              candidate.billing_period], sort_keys=True)
             unique.setdefault(key, []).append(candidate)
         if len(unique) == 1:
             values = next(iter(unique.values()))
             first = values[0]
             output[name] = FieldResult(state="verified", value=first.value, unit=first.unit,
-                currency=first.currency, numeric_encoding=first.numeric_encoding,
+                currency=first.currency, billing_period=first.billing_period,
+                numeric_encoding=first.numeric_encoding,
                 evidence=[c.evidence for c in values])
         elif len(unique) > 1:
             output[name] = FieldResult(state="conflicting", candidates=[values[0] for values in unique.values()],

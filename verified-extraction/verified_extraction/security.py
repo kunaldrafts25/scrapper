@@ -6,9 +6,10 @@ from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 
 class FetchError(Exception):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, http_requests_started: int | None = None):
         super().__init__(message)
         self.code = code
+        self.http_requests_started = http_requests_started
 
 
 def canonical_url(url: str) -> str:

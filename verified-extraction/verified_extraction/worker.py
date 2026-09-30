@@ -5,10 +5,15 @@ import argparse
 import base64
 import importlib
 import json
+import os
+import sqlite3
 import subprocess
 import sys
 import time
+import uuid
 from collections.abc import Callable
+from contextlib import closing
+from pathlib import Path
 
 from .fetch import Page
 from .models import JobRequest, Result
@@ -47,8 +52,15 @@ def run_hard(request: JobRequest, on_tick: Callable[[], bool] | None = None,
              work: str = "verified_extraction.service:run_job"):
     """Enforce a wall-clock cap by killing the child on expiry or lost ownership."""
     started = time.monotonic()
+    db_path = os.environ.get("VE_DB", "data/verified_extraction.sqlite3")
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex
+    with closing(sqlite3.connect(db_path, timeout=5)) as db, db:
+        db.execute("CREATE TABLE IF NOT EXISTS request_counts(token TEXT PRIMARY KEY, started INTEGER NOT NULL)")
+        db.execute("INSERT INTO request_counts(token,started) VALUES(?,0)", (token,))
     process = subprocess.Popen([sys.executable, "-m", "verified_extraction.worker", "--callable", work],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env={**os.environ, "VE_REQUEST_COUNT_TOKEN": token})
     payload = json.dumps(request.model_dump(by_alias=True), ensure_ascii=True).encode("utf-8")
     # communicate drains both pipes; timeout retries preserve buffered output.
     input_data = payload
@@ -74,6 +86,14 @@ def run_hard(request: JobRequest, on_tick: Callable[[], bool] | None = None,
             raise FetchError(message["code"], message["message"])
         return Result.model_validate(message["result"]), {
             digest: _page_from_wire(page) for digest, page in message["captures"].items()}
+    except FetchError as exc:
+        if process.poll() is None:
+            process.kill()
+        process.communicate()
+        with closing(sqlite3.connect(db_path, timeout=5)) as db:
+            row = db.execute("SELECT started FROM request_counts WHERE token=?", (token,)).fetchone()
+        exc.http_requests_started = row[0] if row else None
+        raise
     finally:
         if process.poll() is None:
             process.kill()
@@ -82,6 +102,8 @@ def run_hard(request: JobRequest, on_tick: Callable[[], bool] | None = None,
         except subprocess.TimeoutExpired:
             process.kill()
             process.communicate()
+        with closing(sqlite3.connect(db_path, timeout=5)) as db, db:
+            db.execute("DELETE FROM request_counts WHERE token=?", (token,))
 
 
 def main():

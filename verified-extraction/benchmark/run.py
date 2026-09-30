@@ -39,6 +39,7 @@ class LocalAdapter:
                             fixture.get("redirects", []), raw, chosen, errors, fixture.get("content_type", f"text/html; charset={encoding}"))
         seed = case.get("seed", "https://" + case["site"] + "/")
         request = JobRequest.model_validate({"url": seed, "schema": case.get("schema", SCHEMA),
+            "target_plan": case.get("plan_name"),
             "idempotency_key": case["id"], "page_hints": case.get("page_hints", []),
             "allowed_hostnames": case.get("allowed_hostnames", []),
             "options": case.get("options", {"max_pages": 3, "max_depth": 1, "deadline_seconds": 10})})
@@ -86,6 +87,7 @@ def load_cases(suite: str) -> tuple[str, list[dict]]:
 def evidence_checks(field: dict, kind: str, captures: dict[str, Page], page_rows: list[dict]) -> list[bool]:
     candidates = field["candidates"] if field["state"] == "conflicting" else [
         {"value": field["value"], "unit": field.get("unit"), "currency": field.get("currency"),
+         "billing_period": field.get("billing_period"),
          "numeric_encoding": field.get("numeric_encoding"),
          "evidence": ev} for ev in field["evidence"]] if field["state"] == "verified" else []
     checks = []
@@ -99,6 +101,7 @@ def evidence_checks(field: dict, kind: str, captures: dict[str, Page], page_rows
                        bound.get("decoding_errors", 0), bound.get("content_type", capture.content_type))
                   if capture and bound else None)
         candidate = Candidate(value=item["value"], unit=item.get("unit"), currency=item.get("currency"),
+                              billing_period=item.get("billing_period"),
                               value_type=kind, numeric_encoding=item.get("numeric_encoding"), evidence=ev)
         checks.append(source is not None and verify_candidate(candidate, source))
     return checks
@@ -130,7 +133,7 @@ def score(cases: list[dict]) -> dict:
                     if "currency" in expected:
                         correct = correct and actual.get("currency") == expected["currency"]
                     if name == "listed_price" and expected.get("billing_period"):
-                        correct = correct and actual.get("unit") == expected["billing_period"]
+                        correct = correct and actual.get("billing_period") == expected["billing_period"]
                     if "evidence" in expected:
                         correct = correct and machine_evidence_in_scope(actual["evidence"], expected)
                     elif "excerpt" in expected:

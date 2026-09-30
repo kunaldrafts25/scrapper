@@ -31,6 +31,21 @@ def interrupted_job(request):
     os._exit(7)
 
 
+def counted_slow_job(request):
+    pacer = HostPacer(os.environ["VE_DB"])
+    for _ in range(2):  # robots GET, then a page or redirect GET
+        with pacer.request("example.com", 0, time.monotonic() + 5) as started:
+            started()
+    time.sleep(10)
+
+
+def counted_interrupted_job(request):
+    pacer = HostPacer(os.environ["VE_DB"])
+    with pacer.request("example.com", 0, time.monotonic() + 5) as started:
+        started()
+    os._exit(7)
+
+
 def quick_job(request):
     class Fetcher:
         def fetch(self, url):
@@ -60,6 +75,39 @@ def test_interrupted_worker_returns_typed_error():
         run_hard(request(), work="tests.test_reliability:interrupted_job")
     assert error.value.code == "WORKER_FAILED"
     assert time.monotonic() - start < 2.0
+
+
+@pytest.mark.parametrize("work,code,count", [
+    ("tests.test_reliability:counted_slow_job", "DEADLINE", 2),
+    ("tests.test_reliability:counted_interrupted_job", "WORKER_FAILED", 1)])
+def test_request_count_survives_child_termination(work, code, count, monkeypatch):
+    path = Path(f"test-count-{uuid.uuid4().hex}.db")
+    monkeypatch.setenv("VE_DB", str(path))
+    try:
+        with pytest.raises(FetchError) as error:
+            run_hard(request(), work=work)
+        assert error.value.code == code
+        assert error.value.http_requests_started == count
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_api_timeout_reports_started_gets(monkeypatch):
+    from fastapi.testclient import TestClient
+    from verified_extraction import api
+    path = Path(f"test-count-api-{uuid.uuid4().hex}.db")
+    monkeypatch.setattr(api, "store", Store(str(path)))
+    monkeypatch.setenv("VE_KEYS", '{"test":"key"}')
+    def failed(request, on_tick=None):
+        raise FetchError("DEADLINE", "Whole-job wall-clock deadline reached", 3)
+    monkeypatch.setattr(api, "run_hard", failed)
+    try:
+        response = TestClient(api.app).post("/v1/jobs", json=request().model_dump(by_alias=True),
+                                            headers={"Authorization": "Bearer key"})
+        assert response.status_code == 504
+        assert response.json()["detail"]["http_requests_started"] == 3
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def test_child_returns_capture_and_renews_lease():

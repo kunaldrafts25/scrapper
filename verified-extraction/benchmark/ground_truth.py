@@ -7,7 +7,7 @@ import re
 from decimal import Decimal, InvalidOperation
 
 from bs4 import BeautifulSoup
-from bs4.element import NavigableString, Tag
+from bs4.element import Comment, NavigableString, Tag
 
 from verified_extraction.extract import dom_path, is_hidden
 from verified_extraction.fetch import decode_html
@@ -20,7 +20,7 @@ def normalized(value: str) -> str:
 def visible_text(node: Tag) -> str:
     """Read only rendered text; a visible parent cannot launder hidden descendants."""
     return normalized(" ".join(str(child) for child in node.descendants
-                           if isinstance(child, NavigableString) and
+                           if isinstance(child, NavigableString) and not isinstance(child, Comment) and
                            isinstance(child.parent, Tag) and not is_hidden(child.parent) and
                            not child.find_parent(["script", "style", "template"])))
 

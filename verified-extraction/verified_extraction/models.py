@@ -17,6 +17,7 @@ class JobRequest(BaseModel):
     schema_: dict[str, Any] = Field(alias="schema")
     allowed_hostnames: list[str] = Field(default_factory=list, max_length=10)
     page_hints: list[str] = Field(default_factory=list, max_length=10)
+    target_plan: str | None = Field(default=None, min_length=1, max_length=80)
     options: CrawlOptions = Field(default_factory=CrawlOptions)
     idempotency_key: str = Field(min_length=1, max_length=128)
 
@@ -64,6 +65,8 @@ class Evidence(BaseModel):
     snapshot_hash: str
     label: str | None = None
     raw_value: str | None = None
+    plan_name: str | None = None
+    field_title: str | None = None
 
 
 class Candidate(BaseModel):
@@ -74,6 +77,7 @@ class Candidate(BaseModel):
     value_type: Literal["string", "number", "integer", "boolean"] | None = None
     numeric_encoding: Literal["integer", "integer-string", "decimal-string"] | None = None
     reason: str | None = None
+    billing_period: str | None = None
 
 
 class FieldResult(BaseModel):
@@ -84,6 +88,7 @@ class FieldResult(BaseModel):
     reason: str | None = None
     unit: str | None = None
     currency: str | None = None
+    billing_period: str | None = None
     numeric_encoding: Literal["integer", "integer-string", "decimal-string"] | None = None
 
     @model_validator(mode="after")
@@ -94,8 +99,8 @@ class FieldResult(BaseModel):
 
 
 class Result(BaseModel):
-    schema_version: str = "1.2"
-    extraction_version: str = "0.4.0"
+    schema_version: str = "1.3"
+    extraction_version: str = "0.4.1"
     job_id: str
     status: Literal["complete", "partial", "failed"]
     requested_url: str

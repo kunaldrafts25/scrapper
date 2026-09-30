@@ -24,7 +24,7 @@ def test_workbench_submit_review_export_and_api_error(monkeypatch):
     page = client.get("/review")
     assert page.status_code == 200
     assert "New extraction" in page.text and "Open a job" in page.text
-    assert all(id_ in page.text for id_ in ("create-form", "open-form", "reviewer", "page-errors", "export"))
+    assert all(id_ in page.text for id_ in ("create-form", "open-form", "reviewer", "target-plan", "page-errors", "export"))
     assert "textContent" in page.text and "innerHTML=" not in page.text
     assert "<script src=" not in page.text and "__NONCE__" not in page.text
     nonce = re.search(r'<script nonce="([^"]+)"', page.text).group(1)
