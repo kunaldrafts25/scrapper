@@ -12,6 +12,11 @@ class CrawlOptions(BaseModel):
     max_http_requests: int = Field(default=20, ge=1, le=50)
 
 
+class QuickJobRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    url: str
+
+
 class JobRequest(BaseModel):
     url: str
     schema_: dict[str, Any] = Field(alias="schema")
@@ -100,7 +105,7 @@ class FieldResult(BaseModel):
 
 class Result(BaseModel):
     schema_version: str = "1.3"
-    extraction_version: str = "0.4.1"
+    extraction_version: str = "0.5.0"
     job_id: str
     status: Literal["complete", "partial", "failed"]
     requested_url: str

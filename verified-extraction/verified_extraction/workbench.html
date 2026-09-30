@@ -12,19 +12,21 @@ a{color:#075d71}a:focus-visible,button:focus-visible,input:focus-visible,select:
 @media(max-width:850px){.layout{grid-template-columns:1fr}.intro{display:block}.job-meta{grid-template-columns:1fr 1fr}.evidence-layout{grid-template-columns:1fr}}@media(max-width:540px){.shell{padding:0 14px 32px}.top{padding:15px 0}.top small{display:none}.panel-head,.panel-body,.review-card{padding:17px}.job-meta,.review-grid{grid-template-columns:1fr}.review-grid .wide{grid-column:auto}.field-row{grid-template-columns:minmax(0,1fr) 85px 36px}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 .mt12{margin-top:12px}.mt16{margin-top:16px}.field-row .label-cell{grid-column:1;grid-row:2}.field-row .type-cell{grid-column:2;grid-row:1 / 3}.field-row .remove-cell{grid-column:3;grid-row:1 / 3}
+.shell{max-width:1080px}.intro{padding:54px 0 30px}.intro h1{font-size:clamp(36px,5vw,60px);max-width:680px}.intro p{font-size:16px}.quick-panel{padding:25px;margin-bottom:18px}.quick-panel h2{font-size:22px}.quick-form{display:flex;gap:10px;margin-top:16px}.quick-form input{flex:1;min-width:0;min-height:52px;border:1px solid #9eb3b9;border-radius:9px;padding:12px 15px;font-size:16px}.quick-form .btn{min-height:52px;padding:12px 22px}.quick-panel .hint{margin:12px 0 0}.advanced-workflow{margin-bottom:18px}.advanced-workflow>summary{cursor:pointer;list-style:none;padding:18px 23px;font-weight:700;color:#285367}.advanced-workflow>summary::-webkit-details-marker{display:none}.advanced-workflow>summary:after{content:'+';float:right;font-size:20px;line-height:1}.advanced-workflow[open]>summary:after{content:'-';}.advanced-workflow .layout{display:block;padding:0 16px 16px}.advanced-workflow .rail{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}.advanced-workflow .panel{box-shadow:none}.main{display:block}.main>.panel{margin-top:18px}.review-card>details{margin-top:12px}.review-card>details>summary{cursor:pointer;color:#075d71;font-weight:700;font-size:13px}.review-card .review-grid{margin-top:15px}.review-card .value{margin-bottom:3px}.footer{text-align:center}@media(max-width:700px){.quick-form{display:grid}.advanced-workflow .rail{grid-template-columns:1fr}.intro{padding-top:34px}.quick-panel{padding:20px}}
 </style>
 </head>
 <body>
 <div class="shell">
 <header class="top"><div class="brand"><span class="mark" aria-hidden="true">✓</span>Verified Extraction</div><small>Local evidence workbench · public HTML</small></header>
-<div class="intro"><div><span class="eyebrow">Capture · inspect · decide</span><h1>Every claim needs a source.</h1><p class="muted">Submit a bounded crawl, inspect the captured evidence, and record timed review decisions. Jobs may take up to 45 seconds.</p></div></div>
-<div class="layout">
+<div class="intro"><div><span class="eyebrow">PAGE INSPECTION</span><h1>Paste a link. Get the facts.</h1><p class="muted">See the title, main heading, description, and site name with evidence from the captured page.</p></div></div>
+<section class="panel quick-panel" aria-labelledby="quick-title"><h2 id="quick-title">Inspect a page</h2><form id="quick-form" class="quick-form"><label for="quick-url" class="sr">Public page URL</label><input id="quick-url" type="url" required placeholder="https://example.org/page" autocomplete="url"><button id="quick-submit" class="btn primary" type="submit">Get page info</button></form><p class="hint">Public HTML pages only. Access rules are checked first; unavailable facts stay blank.</p></section>
+<details class="panel advanced-workflow" id="advanced-workflow"><summary>More options</summary><div class="layout">
 <aside class="rail" aria-label="Job controls">
 <section class="panel"><div class="panel-head"><h2>New extraction</h2><span class="hint">3–10 named scalar fields</span></div><form id="create-form" class="panel-body stack">
 <div class="field"><label for="url">Public page URL</label><input id="url" type="url" required placeholder="https://example.org/pricing" autocomplete="url"></div>
 <div class="field"><label for="target-plan">Named plan (optional)</label><input id="target-plan" maxlength="80" placeholder="Team"><span class="hint">Set this for plan-card or comparison-table claims.</span></div>
-<div class="field"><label for="key">Bearer key</label><input id="key" type="password" required autocomplete="off" spellcheck="false"><span class="hint">Held in this tab’s memory. Never included in a URL.</span></div>
-<div class="field"><label for="reviewer">Reviewer ID</label><input id="reviewer" required maxlength="80" autocomplete="off" placeholder="analyst-1"></div>
+<div class="field"><label for="key">API key, if local UI mode is off</label><input id="key" type="password" autocomplete="off" spellcheck="false"><span class="hint">Held only in this tab. Never included in a URL.</span></div>
+<div class="field"><label for="reviewer">Reviewer ID</label><input id="reviewer" maxlength="80" autocomplete="off" value="local-reviewer"></div>
 <div><div class="status-line"><strong>Fields</strong><button id="add-field" class="btn quiet" type="button">+ Add field</button></div><p class="hint">Use the exact visible label on the page. Titles drive extraction.</p><div id="fields" class="stack"></div></div>
 <details><summary>Bounded crawl options</summary><div class="grid2 mt12">
 <div class="field"><label for="max-pages">Pages (1–8)</label><input id="max-pages" type="number" min="1" max="8" value="3" required></div>
@@ -34,18 +36,18 @@ a{color:#075d71}a:focus-visible,button:focus-visible,input:focus-visible,select:
 <p class="hint">Robots checks and redirects count. Crawls stay on the URL’s hostname.</p></details>
 <button id="submit" class="btn primary" type="submit">Run extraction</button></form></section>
 <section class="panel"><div class="panel-head"><h2>Open a job</h2><span class="hint">Use the key and reviewer above</span></div><form id="open-form" class="panel-body stack"><div class="field"><label for="job">Job ID</label><input id="job" required placeholder="UUID" spellcheck="false"></div><button class="btn" type="submit">Load saved result</button></form></section>
-</aside>
+</aside></div></details>
 <main class="main" id="main"><div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
-<section class="panel empty" id="empty"><div class="icon" aria-hidden="true">◇</div><h2>Ready to inspect</h2><p class="muted">Run a job or reopen one by ID. Results, evidence, and review history appear here.</p></section>
-<section class="panel" id="result-panel" hidden><div class="panel-head"><div class="status-line"><div><span class="eyebrow">Current job</span><h2 id="result-title">Result</h2></div><span id="result-status" class="chip"></span></div><div class="job-meta" id="job-meta"></div><div class="actions mt16"><button id="export" class="btn" type="button">Download review export</button><button id="refresh" class="btn" type="button">Refresh</button></div></div><div id="page-errors"></div><div id="reviews"></div><div class="panel-body"><h3>Review history</h3><div id="history" class="hint">No reviews yet.</div></div></section>
-</main></div>
+<section class="panel empty" id="empty"><div class="icon" aria-hidden="true">◇</div><h2>Your page facts will appear here.</h2><p class="muted">Paste a public link above to see what the captured page supports.</p></section>
+<section class="panel" id="result-panel" hidden><div class="panel-head"><div class="status-line"><div><span class="eyebrow">PAGE OVERVIEW</span><h2 id="result-title">Result</h2></div><span id="result-status" class="chip"></span></div><details class="mt16"><summary>Technical details and export</summary><div class="job-meta" id="job-meta"></div><div class="actions mt16"><button id="export" class="btn" type="button">Download review export</button><button id="refresh" class="btn" type="button">Refresh</button></div></details></div><div id="page-errors"></div><div id="reviews"></div><details class="panel-body"><summary>Review history</summary><div id="history" class="hint">No reviews yet.</div></details></section>
+</main>
 <footer class="footer">Source-backed claims still require human judgment. The local workbench does not create independent blind labels.</footer>
 </div>
 <script nonce="__NONCE__">
 (() => {
  const $ = id => document.getElementById(id);
  let currentId = '', currentReviewer = '', activeField = '', busy = false;
- const headers = () => ({Authorization:'Bearer '+$('key').value});
+ const headers = () => $('key').value ? {Authorization:'Bearer '+$('key').value} : {};
  const add = (parent, tag, value, className='') => {const node=document.createElement(tag);node.textContent=value; if(className)node.className=className;parent.append(node);return node};
  const show = (message, error=false) => {const box=$('notice');box.textContent=message;box.className='notice'+(error?' error':'');box.hidden=false};
  const clearNotice = () => {$('notice').hidden=true};
@@ -54,7 +56,7 @@ a{color:#075d71}a:focus-visible,button:focus-visible,input:focus-visible,select:
   try { response=await fetch(path,{...options,headers:{...headers(),...(options.headers||{})},cache:'no-store'}); }
   catch {throw new Error('Network error. Check that the local server is running.');}
   let data; try {data=await response.json()} catch {data={}};
-  if(!response.ok){const detail=data.detail||{};throw new Error((detail.message||detail.code||'Request failed')+' (HTTP '+response.status+')')}
+  if(!response.ok){const detail=data.detail||{};if(response.status===401&&!$('key').value)throw new Error('Local UI mode is off. Start the server with VE_LOCAL_UI=1 or enter an API key under Advanced.');throw new Error((detail.message||detail.code||'Request failed')+' (HTTP '+response.status+')')}
   return data;
  };
  const fieldRow = (name='',title='',type='string') => {
@@ -66,8 +68,15 @@ a{color:#075d71}a:focus-visible,button:focus-visible,input:focus-visible,select:
  };
  [['plan','Plan','string'],['price','Price','number'],['support','Support','string']].forEach(row=>fieldRow(...row));
  $('add-field').onclick=()=>{if($('fields').children.length>=10)return show('The schema supports at most ten fields.',true);fieldRow()};
- const controls=()=>{if(!$('key').value||!$('reviewer').value.trim())throw new Error('Enter a bearer key and reviewer ID.');currentReviewer=$('reviewer').value.trim()};
- const setBusy=(value,message)=>{busy=value;$('submit').disabled=value;if(value)show(message)};
+ const controls=()=>{currentReviewer=$('reviewer').value.trim()||'local-reviewer'};
+ const setBusy=(value,message)=>{busy=value;$('submit').disabled=value;$('quick-submit').disabled=value;if(value)show(message)};
+ $('quick-form').addEventListener('submit',async event=>{
+  event.preventDefault();if(busy)return;clearNotice();
+  try{controls();setBusy(true,'Checking site access and capturing the page. This can take up to 20 seconds.');
+   const result=await api('/v1/quick-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:$('quick-url').value})});
+   $('job').value=result.job_id;await load(result.job_id,result);
+  }catch(error){show(error.message,true)}finally{setBusy(false)}
+ });
  $('create-form').addEventListener('submit',async event=>{
   event.preventDefault(); if(busy)return;clearNotice();
   try {
@@ -95,22 +104,25 @@ a{color:#075d71}a:focus-visible,button:focus-visible,input:focus-visible,select:
   const reviewRoot=$('reviews');reviewRoot.replaceChildren();const names=Object.keys(result.fields||{});if(!names.length)add(reviewRoot,'p','No fields returned.');
   for(const name of names)renderField(reviewRoot,id,name,result.fields[name],evidence[name]||[],saved[name],history);
   const historyRoot=$('history');historyRoot.replaceChildren();if(!history.sessions.length&&!history.edits.length)add(historyRoot,'p','No reviews yet.');else{const list=add(historyRoot,'ol','','history-list');for(const item of history.sessions)add(list,'li',`${item.field_name}: ${item.reviewer_id} · ${item.stopped_at?'stopped, '+item.elapsed_seconds+' s':'active'}`);for(const item of history.edits)add(list,'li',`${item.field_name}: ${item.reviewer_id} · ${item.verdict} · ${item.reason||'no reason'}`)}
-  show('Loaded '+names.length+' fields. '+(result.status==='partial'?'Some fields are unresolved.':'Review source evidence before accepting claims.'));
+  show('Page inspected. '+names.filter(name=>result.fields[name].state==='verified').length+' facts have source evidence; unavailable facts remain blank.');
  }
  function renderField(root,id,name,field,evidence,saved,history){
-  const section=add(root,'section','','review-card');section.setAttribute('aria-label',name+' review');const heading=add(section,'div','','field-title');add(heading,'h3',name);add(heading,'span',field.state,stateChip(field.state));
+  const labels={page_title:'Page title',main_heading:'Main heading',page_description:'Description',site_name:'Site name'};
+  const section=add(root,'section','','review-card');section.setAttribute('aria-label',name+' review');const heading=add(section,'div','','field-title');add(heading,'h3',labels[name]||name.replaceAll('_',' '));add(heading,'span',field.state==='verified'?'Found on page':field.state,stateChip(field.state));
   add(section,'p',field.value===null?'No accepted value':String(field.value)+(field.unit?' / '+field.unit:'')+(field.currency?' '+field.currency:''),'value');if(field.reason)add(section,'p',field.reason,'hint');
-  const evidenceLayout=add(section,'div','','evidence-layout');if(!evidence.length)add(evidenceLayout,'p','No source evidence for this field.','hint');
+  const evidencePanel=add(section,'details','');add(evidencePanel,'summary','View source evidence');
+  const evidenceLayout=add(evidencePanel,'div','','evidence-layout');if(!evidence.length)add(evidenceLayout,'p','No source evidence for this field.','hint');
   for(const item of evidence){const box=add(evidenceLayout,'div','','evidence-box');add(box,'strong','Captured claim');add(box,'blockquote',item.excerpt||'');add(box,'p',(item.source_url||'')+' · '+(item.locator||''),'code');add(box,'p','SHA-256: '+(item.snapshot_hash||'')+' · '+(item.fetched_at||''),'code');if(!item.source_bound)add(box,'p','Source binding unavailable','hint');if(item.source_node){add(box,'p','Source node:','hint');add(box,'pre',item.source_node)}if(item.capture_text){const details=add(box,'details','');add(details,'summary','View captured text');add(details,'pre',item.capture_text)}}
-  const controls=add(section,'div','','review-grid');
+  const reviewPanel=add(section,'details','');add(reviewPanel,'summary','Review this fact');
+  const controls=add(reviewPanel,'div','','review-grid');
   const input=(label,tag,value,wide=false)=>{const wrap=add(controls,'div','','field'+(wide?' wide':''));const idPart=crypto.randomUUID();const labelEl=add(wrap,'label',label);const el=add(wrap,tag,'');el.id=idPart;labelEl.htmlFor=idPart;el.value=value||'';return el};
   const verdict=input('Verdict','select','');for(const choice of [['','Choose verdict'],['correct','Correct'],['wrong','Wrong'],['unsupported','Unsupported'],['conflicting','Conflicting'],['uncertain','Uncertain']]){const option=add(verdict,'option',choice[1]);option.value=choice[0]}verdict.value=saved?.verdict||'';
   const corrected=input('Corrected value','input',saved?.corrected_value);corrected.maxLength=300;
   const source=input('Corrected source URL','input',saved?.corrected_source_url,true);source.maxLength=2000;
   const excerpt=input('Supporting excerpt','textarea',saved?.corrected_excerpt,true);excerpt.maxLength=1000;
   const reason=input('Reason','textarea',saved?.reason,true);reason.maxLength=500;
-  const session=add(section,'div','','session');const start=add(session,'button','Start review','btn');const stop=add(session,'button','Stop review','btn');start.type=stop.type='button';const save=add(session,'button','Save decision','btn primary');save.type='button';
-  const status=add(section,'p',activeField===name?'Review session active':'Recorded: '+(saved?.time_spent_seconds||0)+' seconds','hint');
+  const session=add(reviewPanel,'div','','session');const start=add(session,'button','Start review','btn');const stop=add(session,'button','Stop review','btn');start.type=stop.type='button';const save=add(session,'button','Save decision','btn primary');save.type='button';
+  const status=add(reviewPanel,'p',activeField===name?'Review session active':'Recorded: '+(saved?.time_spent_seconds||0)+' seconds','hint');
   const call=async(method,suffix,body)=>api('/v1/jobs/'+id+'/reviews/'+encodeURIComponent(name)+suffix,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   start.onclick=async()=>{if(activeField)return show('Stop the current field review first.',true);try{await call('POST','/start',{reviewer_id:currentReviewer});activeField=name;status.textContent='Review session active';show('Reviewing '+name)}catch(error){show(error.message,true)}};
   stop.onclick=async()=>{if(activeField!==name)return show('This field is not active.',true);try{const data=await call('POST','/stop',{reviewer_id:currentReviewer});activeField='';status.textContent='Session stopped: '+data.elapsed_seconds+' seconds';show('Review time recorded.')}catch(error){show(error.message,true)}};

@@ -7,19 +7,20 @@ import os
 import secrets
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 from fastapi import FastAPI, Header, HTTPException, Depends, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response, RedirectResponse
 from fastapi.responses import JSONResponse
 
-from .models import JobRequest, ReviewInput, ReviewSessionInput
+from .models import JobRequest, QuickJobRequest, ReviewInput, ReviewSessionInput
 from .security import FetchError
 from .worker import run_hard
 from .extract import source_node_for
 from .store import Store
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
-app = FastAPI(title="Verified Extraction", version="0.4.1")
+app = FastAPI(title="Verified Extraction", version="0.5.0")
 store = Store(os.environ.get("VE_DB", "data/verified_extraction.sqlite3"))
 
 
@@ -29,18 +30,28 @@ def validation_error(request: Request, exc: RequestValidationError):
         "errors": [{"location": [str(part) for part in item["loc"]], "message": item["msg"]} for item in exc.errors()]}})
 
 
-def tenant(authorization: str | None = Header(default=None)) -> str:
+def tenant(request: Request, authorization: str | None = Header(default=None)) -> str:
     # Local MVP: configure VE_KEYS as a JSON object mapping tenant ID to random API key.
     import json
     try:
         keys = json.loads(os.environ.get("VE_KEYS", "{}"))
     except json.JSONDecodeError:
         raise HTTPException(500, detail={"code": "CONFIG_ERROR"})
-    if not authorization or not authorization.startswith("Bearer "):
+    if not authorization:
+        local_hosts = {"127.0.0.1", "localhost", "::1"}
+        origin = request.headers.get("origin")
+        same_origin = bool(origin) and urlsplit(origin).scheme == request.url.scheme and \
+            urlsplit(origin).netloc == request.headers.get("host")
+        origin_allowed = same_origin if request.method not in {"GET", "HEAD"} else not origin or same_origin
+        if (os.environ.get("VE_LOCAL_UI") == "1" and request.client and
+            request.client.host in local_hosts and request.url.hostname in local_hosts and origin_allowed):
+            return "__local_ui__"
+        raise HTTPException(401, detail={"code": "UNAUTHORIZED"})
+    if not authorization.startswith("Bearer "):
         raise HTTPException(401, detail={"code": "UNAUTHORIZED"})
     supplied = authorization[7:]
     for tenant_id, key in keys.items():
-        if isinstance(key, str) and hmac.compare_digest(supplied, key):
+        if tenant_id != "__local_ui__" and isinstance(key, str) and hmac.compare_digest(supplied, key):
             return tenant_id
     raise HTTPException(401, detail={"code": "UNAUTHORIZED"})
 
@@ -82,6 +93,18 @@ def create_job(request: JobRequest, tenant_id: str = Depends(tenant)):
         raise
 
 
+@app.post("/v1/quick-jobs")
+def create_quick_job(request: QuickJobRequest, tenant_id: str = Depends(tenant)):
+    """One URL in, four capture-backed general page facts out."""
+    fields = {name: {"type": "string", "title": title} for name, title in (
+        ("page_title", "Page title"), ("main_heading", "Main heading"),
+        ("page_description", "Description"), ("site_name", "Site name"))}
+    job = JobRequest(url=request.url, schema={"type": "object", "properties": fields},
+                     options={"max_pages": 1, "max_depth": 0, "deadline_seconds": 20,
+                              "max_http_requests": 10}, idempotency_key=secrets.token_hex(16))
+    return create_job(job, tenant_id)
+
+
 @app.get("/v1/jobs/{job_id}")
 def get_job(job_id: str, tenant_id: str = Depends(tenant)):
     result = store.get(tenant_id, job_id)
@@ -107,6 +130,11 @@ def get_raw_snapshot(job_id: str, digest: str, tenant_id: str = Depends(tenant))
                     media_type="application/octet-stream",
                     headers={"Content-Disposition": 'attachment; filename="capture.bin"',
                              "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/", include_in_schema=False)
+def home():
+    return RedirectResponse("/review", status_code=307)
 
 
 @app.get("/review", response_class=HTMLResponse)

@@ -1,6 +1,6 @@
 # Live smoke and development run — 30 September 2026
 
-The user authorized the separate IANA smoke check and the 12 development hosts in the frozen 24-site inventory for 30 September 2026. The source instruction and SHA-256 are recorded in ignored `benchmark/local/approval_record.json`. This authorization replaced the proposed 15 October window **for these two scopes only**. The 12 held-out product pages were not captured; the analyst hourly rate and threshold confirmation are still pending. All captures, result envelopes, and review templates are local under ignored `benchmark/local/`; they must be deleted by **7 October 2026** under the seven-day retention policy. No account or paid provider was used.
+The user authorized the separate IANA smoke check and the 12 development hosts in the frozen 24-site inventory for 30 September 2026. The source instruction and SHA-256 are recorded in ignored `benchmark/local/approval_record.json`. This authorization replaced the proposed 15 October window **for these two scopes only**. The 12 held-out product pages were not captured; the analyst hourly rate and threshold confirmation are still pending. After provisional source review, the user explicitly approved deletion of the ignored live captures. `benchmark/local/development/` and `benchmark/local/iana_smoke/` were removed on 30 September 2026; the local live capture database was already absent at cleanup. Independent labels cannot now be produced from those bytes without a newly approved capture. No account or paid provider was used.
 
 ## IANA smoke
 

@@ -73,6 +73,7 @@ CURRENCY = {"$": "USD", "\u20ac": "EUR", "\u00a3": "GBP", "\u20b9": "INR", "doll
 MAX_SAFE_JSON_INTEGER = 2**53 - 1
 MONEY = re.compile(r"(?<![\w])(?P<prefix>USD|EUR|GBP|INR)?\s*(?P<symbol>[$\u20ac\u00a3\u20b9])?\s*(?P<number>\d+(?:,\d{3})*(?:\.\d+)?)\s*(?P<code>USD|EUR|GBP|INR)?", re.I)
 PLAN_FIELDS = {"named_plan", "listed_price", "currency", "billing_period", "usage_or_seat_limit", "support_channel"}
+PAGE_FACT_FIELDS = {"page_title", "main_heading", "page_description", "site_name"}
 
 
 def _visible_text(tag: Tag) -> str:
@@ -319,6 +320,42 @@ def candidates_for(page: Page, name: str, spec: dict) -> list[Candidate]:
     return results
 
 
+def page_fact_candidates(page: Page, name: str, spec: dict) -> list[Candidate]:
+    """Extract a small fixed set of facts from one captured HTML page."""
+    if name not in PAGE_FACT_FIELDS or spec["type"] != "string":
+        return []
+    soup = BeautifulSoup(page.html, "html.parser")
+    if name == "page_title":
+        nodes = soup.find_all("title")
+        if not nodes:
+            nodes = [node for node in soup.find_all("meta")
+                     if str(node.get("property", "")).casefold() == "og:title"]
+    elif name == "main_heading":
+        nodes = [node for node in soup.find_all("h1") if not is_hidden(node)]
+    elif name == "page_description":
+        nodes = [node for node in soup.find_all("meta")
+                 if str(node.get("name", "")).casefold() == "description"]
+        if not nodes:
+            nodes = [node for node in soup.find_all("meta")
+                     if str(node.get("property", "")).casefold() == "og:description"]
+    else:
+        nodes = [node for node in soup.find_all("meta")
+                 if str(node.get("property", "")).casefold() == "og:site_name"]
+    output = []
+    for node in nodes:
+        raw = (node.get("content", "") if node.name == "meta" else
+               _visible_text(node) if node.name == "h1" else node.get_text(" ", strip=True))
+        raw = " ".join(str(raw).split())
+        parsed = parse_scalar(raw, "string")
+        if parsed is None:
+            continue
+        output.append(Candidate(value=parsed[0], value_type="string",
+            evidence=Evidence(source_url=page.url, fetched_at=page.fetched_at,
+                snapshot_hash=snapshot_hash(page), locator=f"{dom_path(node)}::page-fact({name})",
+                excerpt=raw, label=name, raw_value=raw)))
+    return output
+
+
 def verify_candidate(candidate: Candidate, source: Page | bytes | str) -> bool:
     if isinstance(source, bytes):
         raise TypeError("byte verification requires a Page with recorded encoding and source URL")
@@ -341,6 +378,16 @@ def verify_candidate(candidate: Candidate, source: Page | bytes | str) -> bool:
                    item.unit == candidate.unit and item.currency == candidate.currency and
                    item.billing_period == candidate.billing_period and
                    item.numeric_encoding == candidate.numeric_encoding for item in regenerated)
+    if "::page-fact(" in ev.locator:
+        if not isinstance(source, Page) or ev.label not in PAGE_FACT_FIELDS:
+            return False
+        regenerated = page_fact_candidates(source, ev.label, {"type": candidate.value_type})
+        return (candidate.unit is None and candidate.currency is None and
+                candidate.billing_period is None and candidate.numeric_encoding is None and
+                any(item.evidence.locator == ev.locator and item.evidence.excerpt == ev.excerpt and
+                   item.evidence.raw_value == ev.raw_value and item.value == candidate.value
+                   for item in regenerated)
+                )
     if "::item(" in ev.locator:
         try:
             script_path, item_part, key = ev.locator.split("::", 2)
@@ -382,6 +429,7 @@ def extract_fields(pages: list[Page], properties: dict, blocked: bool,
     for name, spec in properties.items():
         raw = [candidate for page in pages for candidate in
                (plan_candidates(page, name, spec, target_plan) if target_plan and name in PLAN_FIELDS
+                else page_fact_candidates(page, name, spec) if name in PAGE_FACT_FIELDS
                 else candidates_for(page, name, spec))]
         good = [candidate for candidate in raw if any(page.url == candidate.evidence.source_url
             and verify_candidate(candidate, page) for page in pages)]
