@@ -45,6 +45,9 @@ class Store:
                 tenant TEXT NOT NULL, job_id TEXT NOT NULL, field_name TEXT NOT NULL,
                 review_json TEXT NOT NULL, updated_at TEXT NOT NULL);
             """)
+            # executescript commits any preceding transaction; serialize the
+            # following PRAGMA/ALTER migrations across starting workers.
+            db.execute("BEGIN IMMEDIATE")
             columns = {row[1] for row in db.execute("PRAGMA table_info(snapshots)")}
             for column, definition in (("raw", "BLOB"), ("encoding", "TEXT"),
                                        ("decoding_errors", "INTEGER"), ("content_type", "TEXT")):
@@ -106,6 +109,12 @@ class Store:
         with self._db() as db:
             db.execute("DELETE FROM claims WHERE tenant=? AND idem=? AND request_hash=? AND owner=? AND state='pending'",
                        (tenant, key, request_hash, owner))
+
+    def cancel_claim(self, tenant: str, key: str) -> bool:
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            return db.execute("UPDATE claims SET state='cancelled',lease_until=NULL WHERE tenant=? AND idem=? AND state='pending'",
+                              (tenant, key)).rowcount == 1
 
     def put(self, tenant: str, job_id: str, key: str, request_hash: str, result: dict,
             snapshots: dict[str, Page | str], owner: str | None = None, request_payload: dict | None = None):
@@ -215,6 +224,15 @@ class Store:
         with self._db() as db:
             row = db.execute("SELECT result FROM jobs WHERE tenant=? AND id=?", (tenant, job_id)).fetchone()
         return json.loads(row[0]) if row else None
+
+    def recent(self, tenant: str, limit: int = 12) -> list[dict]:
+        self.purge_expired()
+        with self._db() as db:
+            rows = db.execute("SELECT id,result,created_at FROM jobs WHERE tenant=? ORDER BY created_at DESC LIMIT ?",
+                              (tenant, min(max(limit, 1), 50))).fetchall()
+        return [{"job_id": job_id, "requested_url": json.loads(body)["requested_url"],
+                 "status": json.loads(body)["status"], "created_at": created}
+                for job_id, body, created in rows]
 
     def get_request(self, tenant: str, job_id: str):
         with self._db() as db:

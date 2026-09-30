@@ -1,0 +1,14 @@
+{
+  "fixture_version": "one-link-1.0",
+  "cases": [
+    {"id":"article", "expected_type":"article", "html":"<title>Guide</title><meta property='og:type' content='article'><h1>Guide</h1><article><time>2026-01-01</time><p>A detailed guide to safe page inspection and source evidence.</p></article>", "expected":[["Page","page_title","Guide"],["Page","main_heading","Guide"]]},
+    {"id":"organization", "expected_type":"organization/service", "html":"<title>Acme</title><h1>Acme</h1><script type='application/ld+json'>{\"@type\":\"Organization\",\"name\":\"Acme\",\"url\":\"https://example.org/page\",\"description\":\"Public research services\"}</script>", "expected":[["Organization","name","Acme"],["Organization","description","Public research services"]]},
+    {"id":"product", "expected_type":"product", "html":"<title>Camera</title><h1>Camera</h1><script type='application/ld+json'>{\"@type\":\"Product\",\"name\":\"Camera\",\"url\":\"https://example.org/page\",\"offers\":[{\"name\":\"Basic\",\"price\":\"49.50\",\"priceCurrency\":\"USD\"},{\"name\":\"Pro\",\"price\":\"79\",\"priceCurrency\":\"EUR\"}]}</script>", "expected":[["Offer: Basic","price","49.50"],["Offer: Pro","price","79"]]},
+    {"id":"pricing", "expected_type":"saas_pricing", "html":"<title>Plans</title><h1>Plans</h1><article><h2>Team</h2><p>Price: USD 20 per user/month, billed annually</p></article><article><h2>Business</h2><p>Price: EUR 40 per user/month, billed monthly</p></article>", "expected":[["Plan: Team","listed_price",20],["Plan: Business","listed_price",40]]},
+    {"id":"general", "expected_type":"general", "html":"<title>General information</title><h1>Welcome</h1><p>This page provides general information about the project and its current work.</p>", "expected":[["Page","page_title","General information"]]},
+    {"id":"hidden_comment", "expected_type":"general", "html":"<title>Visible</title><h1>Visible</h1><p hidden>Support: Phone</p><!-- Support: Phone --><p>Support: Email</p>", "expected":[["Details","detail:support","Email"]], "forbidden_values":["Phone"]},
+    {"id":"wrong_entity", "expected_type":"article", "html":"<title>Report</title><h1>Report</h1><script type='application/ld+json'>{\"@graph\":[{\"@type\":\"Article\",\"headline\":\"Report\",\"url\":\"https://example.org/page\"},{\"@type\":\"Product\",\"name\":\"Other thing\",\"url\":\"https://other.example/item\"}]}</script>", "expected":[["Article","headline","Report"]], "forbidden_values":["Other thing"]},
+    {"id":"conflict", "expected_type":"general", "html":"<title>First</title><title>Second</title><h1>Heading</h1>", "expected_states":[["Page","page_title","ambiguous"]]},
+    {"id":"script_only", "expected_type":"general", "html":"<div id='root'></div><script>document.body.textContent='Support: Phone'</script>", "expected_states":[["Page","page_title","missing"]], "forbidden_values":["Phone"]}
+  ]
+}

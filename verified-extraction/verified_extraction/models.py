@@ -15,6 +15,12 @@ class CrawlOptions(BaseModel):
 class QuickJobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     url: str
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class QuickCancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    idempotency_key: str = Field(min_length=1, max_length=128)
 
 
 class JobRequest(BaseModel):
@@ -23,6 +29,7 @@ class JobRequest(BaseModel):
     allowed_hostnames: list[str] = Field(default_factory=list, max_length=10)
     page_hints: list[str] = Field(default_factory=list, max_length=10)
     target_plan: str | None = Field(default=None, min_length=1, max_length=80)
+    automatic: bool = False
     options: CrawlOptions = Field(default_factory=CrawlOptions)
     idempotency_key: str = Field(min_length=1, max_length=128)
 
@@ -104,8 +111,8 @@ class FieldResult(BaseModel):
 
 
 class Result(BaseModel):
-    schema_version: str = "1.3"
-    extraction_version: str = "0.5.0"
+    schema_version: str = "1.4"
+    extraction_version: str = "0.6.0"
     job_id: str
     status: Literal["complete", "partial", "failed"]
     requested_url: str
@@ -114,6 +121,7 @@ class Result(BaseModel):
     pages: list[dict[str, Any]]
     errors: list[dict[str, Any]]
     usage: dict[str, Any]
+    automatic_result: dict[str, Any] | None = None
 
 
 class ReviewInput(BaseModel):

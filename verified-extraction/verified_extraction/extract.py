@@ -162,11 +162,12 @@ def _billing_period(text: str) -> str | None:
     return "year" if billed <= {"yearly", "annually"} else "month" if billed == {"monthly"} else None
 
 
-def plan_candidates(page: Page, name: str, spec: dict, target_plan: str) -> list[Candidate]:
+def plan_candidates(page: Page, name: str, spec: dict, target_plan: str,
+                    soup: BeautifulSoup | None = None) -> list[Candidate]:
     """Use only local named-plan cards or one unspanned table column."""
     if name not in PLAN_FIELDS:
         return []
-    soup = BeautifulSoup(page.html, "html.parser")
+    soup = soup if soup is not None else BeautifulSoup(page.html, "html.parser")
     digest = snapshot_hash(page)
     output = []
     for scope, plan_node, column in _plan_scopes(soup, target_plan):

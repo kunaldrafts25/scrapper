@@ -1,0 +1,14 @@
+{
+  "scope_sha256": "PENDING",
+  "max_gets_per_host": 10,
+  "max_gets_overall": 240,
+  "window": "2026-10-15 09:00-11:00 Asia/Kolkata",
+  "data_destination": "benchmark/local/one_link/ and benchmark/local/one_link.sqlite3",
+  "retention_days": 7,
+  "provider_spend_ceiling_usd": 0,
+  "accounts": "none",
+  "site_impact": "read-only GET; no assets or scripts",
+  "approver": null,
+  "approved_at": null,
+  "authorization_text": null
+}

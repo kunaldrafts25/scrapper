@@ -6,6 +6,8 @@ import logging
 import os
 import secrets
 import time
+import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 from fastapi import FastAPI, Header, HTTPException, Depends, Request
@@ -13,15 +15,37 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response, RedirectResponse
 from fastapi.responses import JSONResponse
 
-from .models import JobRequest, QuickJobRequest, ReviewInput, ReviewSessionInput
+from .models import JobRequest, QuickJobRequest, QuickCancelRequest, ReviewInput, ReviewSessionInput
 from .security import FetchError
 from .worker import run_hard
 from .extract import source_node_for
 from .store import Store
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
-app = FastAPI(title="Verified Extraction", version="0.5.0")
 store = Store(os.environ.get("VE_DB", "data/verified_extraction.sqlite3"))
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    async def cleanup():
+        while True:
+            try:
+                await asyncio.to_thread(store.purge_expired)
+            except Exception:
+                logging.exception("Expired-data cleanup failed")
+            await asyncio.sleep(3600)
+    task = asyncio.create_task(cleanup())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+app = FastAPI(title="Verified Extraction", version="0.6.0", lifespan=lifespan)
 
 
 @app.exception_handler(RequestValidationError)
@@ -66,6 +90,8 @@ def create_job(request: JobRequest, tenant_id: str = Depends(tenant)):
         state = store.claim(tenant_id, request.idempotency_key, fingerprint, owner)
         if state == "conflict":
             raise HTTPException(409, detail={"code": "IDEMPOTENCY_CONFLICT"})
+        if state == "cancelled":
+            raise HTTPException(409, detail={"code": "JOB_CANCELLED"})
         if state == "complete":
             existing = store.by_key(tenant_id, request.idempotency_key)
             if existing:
@@ -88,6 +114,11 @@ def create_job(request: JobRequest, tenant_id: str = Depends(tenant)):
         status = 504 if exc.code == "DEADLINE" else 503 if exc.code in {"WORKER_FAILED", "CLAIM_LOST"} else 422
         raise HTTPException(status, detail={"code": exc.code, "message": str(exc),
                                             "http_requests_started": exc.http_requests_started})
+    except RuntimeError as exc:
+        store.release_claim(tenant_id, request.idempotency_key, fingerprint, owner)
+        if str(exc) == "CLAIM_LOST":
+            raise HTTPException(409, detail={"code": "JOB_CANCELLED_OR_REPLACED"}) from exc
+        raise
     except Exception:
         store.release_claim(tenant_id, request.idempotency_key, fingerprint, owner)
         raise
@@ -99,10 +130,15 @@ def create_quick_job(request: QuickJobRequest, tenant_id: str = Depends(tenant))
     fields = {name: {"type": "string", "title": title} for name, title in (
         ("page_title", "Page title"), ("main_heading", "Main heading"),
         ("page_description", "Description"), ("site_name", "Site name"))}
-    job = JobRequest(url=request.url, schema={"type": "object", "properties": fields},
+    job = JobRequest(url=request.url, schema={"type": "object", "properties": fields}, automatic=True,
                      options={"max_pages": 1, "max_depth": 0, "deadline_seconds": 20,
-                              "max_http_requests": 10}, idempotency_key=secrets.token_hex(16))
+                              "max_http_requests": 10}, idempotency_key=request.idempotency_key or secrets.token_hex(16))
     return create_job(job, tenant_id)
+
+
+@app.post("/v1/quick-jobs/cancel")
+def cancel_quick_job(request: QuickCancelRequest, tenant_id: str = Depends(tenant)):
+    return {"cancelled": store.cancel_claim(tenant_id, request.idempotency_key)}
 
 
 @app.get("/v1/jobs/{job_id}")
@@ -111,6 +147,11 @@ def get_job(job_id: str, tenant_id: str = Depends(tenant)):
     if result is None:
         raise HTTPException(404, detail={"code": "NOT_FOUND"})
     return result
+
+
+@app.get("/v1/recent-jobs")
+def recent_jobs(tenant_id: str = Depends(tenant)):
+    return {"jobs": store.recent(tenant_id)}
 
 
 @app.get("/v1/jobs/{job_id}/snapshots/{digest}", response_class=PlainTextResponse)

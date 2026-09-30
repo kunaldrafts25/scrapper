@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from .extract import extract_fields, links_for, snapshot_hash
+from .automatic import build_automatic_result
 from .fetch import HTTPFetcher, Page
 from .models import JobRequest, Result
 from .security import FetchError, canonical_url, tracking_key
@@ -96,7 +97,8 @@ def run_job(request: JobRequest, fetcher=None) -> tuple[Result, dict[str, Page]]
              "cost_note": "HTTP and local compute not metered in MVP"}
     result = Result(job_id=str(uuid.uuid4()), status=status, requested_url=seed,
                     observed_at=datetime.now(timezone.utc).isoformat(), fields=fields,
-                    pages=page_rows, errors=errors, usage=usage)
+                    pages=page_rows, errors=errors, usage=usage,
+                    automatic_result=build_automatic_result(pages, errors, blocked) if request.automatic else None)
     log.info(json.dumps({"event": "job_complete", "status": status, "pages": len(pages),
                          "elapsed_seconds": elapsed, "field_states": sorted(states)}))
     captures = {}

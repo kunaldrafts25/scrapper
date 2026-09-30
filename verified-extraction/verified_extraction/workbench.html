@@ -13,13 +13,15 @@ a{color:#075d71}a:focus-visible,button:focus-visible,input:focus-visible,select:
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 .mt12{margin-top:12px}.mt16{margin-top:16px}.field-row .label-cell{grid-column:1;grid-row:2}.field-row .type-cell{grid-column:2;grid-row:1 / 3}.field-row .remove-cell{grid-column:3;grid-row:1 / 3}
 .shell{max-width:1080px}.intro{padding:54px 0 30px}.intro h1{font-size:clamp(36px,5vw,60px);max-width:680px}.intro p{font-size:16px}.quick-panel{padding:25px;margin-bottom:18px}.quick-panel h2{font-size:22px}.quick-form{display:flex;gap:10px;margin-top:16px}.quick-form input{flex:1;min-width:0;min-height:52px;border:1px solid #9eb3b9;border-radius:9px;padding:12px 15px;font-size:16px}.quick-form .btn{min-height:52px;padding:12px 22px}.quick-panel .hint{margin:12px 0 0}.advanced-workflow{margin-bottom:18px}.advanced-workflow>summary{cursor:pointer;list-style:none;padding:18px 23px;font-weight:700;color:#285367}.advanced-workflow>summary::-webkit-details-marker{display:none}.advanced-workflow>summary:after{content:'+';float:right;font-size:20px;line-height:1}.advanced-workflow[open]>summary:after{content:'-';}.advanced-workflow .layout{display:block;padding:0 16px 16px}.advanced-workflow .rail{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}.advanced-workflow .panel{box-shadow:none}.main{display:block}.main>.panel{margin-top:18px}.review-card>details{margin-top:12px}.review-card>details>summary{cursor:pointer;color:#075d71;font-weight:700;font-size:13px}.review-card .review-grid{margin-top:15px}.review-card .value{margin-bottom:3px}.footer{text-align:center}@media(max-width:700px){.quick-form{display:grid}.advanced-workflow .rail{grid-template-columns:1fr}.intro{padding-top:34px}.quick-panel{padding:20px}}
+.auto-overview{padding:22px 23px;border-bottom:1px solid #e2e9eb}.auto-overview p{font-size:17px;max-width:72ch;margin:8px 0}.auto-group{padding:20px 23px;border-bottom:1px solid #e2e9eb}.auto-group:last-child{border-bottom:0}.auto-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.auto-fact{border:1px solid #dfe8ea;border-radius:10px;padding:14px;min-width:0}.auto-fact p{margin:7px 0;overflow-wrap:anywhere}.auto-fact details{font-size:13px}.recent-panel{margin-bottom:18px}.recent-list{list-style:none;padding:0;margin:0}.recent-list li{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid #e2e9eb;padding:11px 0}.recent-list li span{overflow-wrap:anywhere}.technical-review{padding:15px 23px}.technical-review>summary{cursor:pointer;font-weight:700}@media(max-width:700px){.auto-facts{grid-template-columns:1fr}.recent-list li{align-items:flex-start;flex-direction:column}}
 </style>
 </head>
 <body>
 <div class="shell">
 <header class="top"><div class="brand"><span class="mark" aria-hidden="true">✓</span>Verified Extraction</div><small>Local evidence workbench · public HTML</small></header>
-<div class="intro"><div><span class="eyebrow">PAGE INSPECTION</span><h1>Paste a link. Get the facts.</h1><p class="muted">See the title, main heading, description, and site name with evidence from the captured page.</p></div></div>
-<section class="panel quick-panel" aria-labelledby="quick-title"><h2 id="quick-title">Inspect a page</h2><form id="quick-form" class="quick-form"><label for="quick-url" class="sr">Public page URL</label><input id="quick-url" type="url" required placeholder="https://example.org/page" autocomplete="url"><button id="quick-submit" class="btn primary" type="submit">Get page info</button></form><p class="hint">Public HTML pages only. Access rules are checked first; unavailable facts stay blank.</p></section>
+<div class="intro"><div><span class="eyebrow">PAGE INSPECTION</span><h1>Paste a link. Get the facts.</h1><p class="muted">Understand a public page from the text and data it actually contains.</p></div></div>
+<section class="panel quick-panel" aria-labelledby="quick-title"><h2 id="quick-title">Inspect a page</h2><form id="quick-form" class="quick-form"><label for="quick-url" class="sr">Public page URL</label><input id="quick-url" type="url" required placeholder="https://example.org/page" autocomplete="url"><button id="quick-submit" class="btn primary" type="submit">Get page info</button><button id="quick-cancel" class="btn" type="button" hidden>Cancel</button></form><p class="hint">Public HTML pages only. Access rules are checked first; unavailable facts stay blank.</p></section>
+<section class="panel recent-panel" aria-labelledby="recent-title"><div class="panel-head"><div class="status-line"><h2 id="recent-title">Recent pages</h2><button id="recent-refresh" class="btn quiet" type="button">Refresh</button></div></div><div class="panel-body"><ul id="recent-list" class="recent-list"><li>Saved pages from this workspace appear here.</li></ul></div></section>
 <details class="panel advanced-workflow" id="advanced-workflow"><summary>More options</summary><div class="layout">
 <aside class="rail" aria-label="Job controls">
 <section class="panel"><div class="panel-head"><h2>New extraction</h2><span class="hint">3–10 named scalar fields</span></div><form id="create-form" class="panel-body stack">
@@ -39,24 +41,25 @@ a{color:#075d71}a:focus-visible,button:focus-visible,input:focus-visible,select:
 </aside></div></details>
 <main class="main" id="main"><div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
 <section class="panel empty" id="empty"><div class="icon" aria-hidden="true">◇</div><h2>Your page facts will appear here.</h2><p class="muted">Paste a public link above to see what the captured page supports.</p></section>
-<section class="panel" id="result-panel" hidden><div class="panel-head"><div class="status-line"><div><span class="eyebrow">PAGE OVERVIEW</span><h2 id="result-title">Result</h2></div><span id="result-status" class="chip"></span></div><details class="mt16"><summary>Technical details and export</summary><div class="job-meta" id="job-meta"></div><div class="actions mt16"><button id="export" class="btn" type="button">Download review export</button><button id="refresh" class="btn" type="button">Refresh</button></div></details></div><div id="page-errors"></div><div id="reviews"></div><details class="panel-body"><summary>Review history</summary><div id="history" class="hint">No reviews yet.</div></details></section>
+<section class="panel" id="result-panel" hidden><div class="panel-head"><div class="status-line"><div><span class="eyebrow">PAGE OVERVIEW</span><h2 id="result-title">Result</h2></div><span id="result-status" class="chip"></span></div><details class="mt16"><summary>Technical details and export</summary><div class="job-meta" id="job-meta"></div><div class="actions mt16"><button id="export" class="btn" type="button">Download review export</button><button id="refresh" class="btn" type="button">Refresh</button><button id="delete-job" class="btn" type="button">Delete this job</button></div></details></div><div id="page-errors"></div><div id="automatic-result"></div><details class="technical-review" id="technical-review"><summary>Advanced extraction and review</summary><div id="reviews"></div><details class="panel-body"><summary>Review history</summary><div id="history" class="hint">No reviews yet.</div></details></details></section>
 </main>
 <footer class="footer">Source-backed claims still require human judgment. The local workbench does not create independent blind labels.</footer>
 </div>
 <script nonce="__NONCE__">
 (() => {
  const $ = id => document.getElementById(id);
- let currentId = '', currentReviewer = '', activeField = '', busy = false;
+ let currentId = '', currentReviewer = '', activeField = '', busy = false, quickKey = '', quickUrl = '';
  const headers = () => $('key').value ? {Authorization:'Bearer '+$('key').value} : {};
  const add = (parent, tag, value, className='') => {const node=document.createElement(tag);node.textContent=value; if(className)node.className=className;parent.append(node);return node};
  const show = (message, error=false) => {const box=$('notice');box.textContent=message;box.className='notice'+(error?' error':'');box.hidden=false};
+ const errorText=code=>({ROBOTS_DENIED:'This site does not allow the page to be fetched',ROBOTS_UNAVAILABLE:'Could not confirm the site access rules',OUT_OF_SCOPE:'The page redirected outside the allowed site',PRIVATE_TARGET:'The address is not a public website',TOO_LARGE:'The page exceeds the size limit',DEADLINE:'The page took too long',ACCESS_DENIED:'The site denied access',JOB_CANCELLED:'The job was cancelled',CLAIM_LOST:'The job was cancelled or replaced'}[code]||code||'Request failed');
  const clearNotice = () => {$('notice').hidden=true};
  const api = async (path, options={}) => {
   let response;
   try { response=await fetch(path,{...options,headers:{...headers(),...(options.headers||{})},cache:'no-store'}); }
   catch {throw new Error('Network error. Check that the local server is running.');}
   let data; try {data=await response.json()} catch {data={}};
-  if(!response.ok){const detail=data.detail||{};if(response.status===401&&!$('key').value)throw new Error('Local UI mode is off. Start the server with VE_LOCAL_UI=1 or enter an API key under Advanced.');throw new Error((detail.message||detail.code||'Request failed')+' (HTTP '+response.status+')')}
+  if(!response.ok){const detail=data.detail||{};if(response.status===401&&!$('key').value)throw new Error('Local UI mode is off. Start the server with VE_LOCAL_UI=1 or enter an API key under More options.');throw new Error(errorText(detail.code)+(detail.http_requests_started!==undefined&&detail.http_requests_started!==null?' · '+detail.http_requests_started+' GETs started':'')+' (HTTP '+response.status+')')}
   return data;
  };
  const fieldRow = (name='',title='',type='string') => {
@@ -70,12 +73,50 @@ a{color:#075d71}a:focus-visible,button:focus-visible,input:focus-visible,select:
  $('add-field').onclick=()=>{if($('fields').children.length>=10)return show('The schema supports at most ten fields.',true);fieldRow()};
  const controls=()=>{currentReviewer=$('reviewer').value.trim()||'local-reviewer'};
  const setBusy=(value,message)=>{busy=value;$('submit').disabled=value;$('quick-submit').disabled=value;if(value)show(message)};
+ $('quick-cancel').onclick=async()=>{if(!quickKey||!busy)return;try{const outcome=await api('/v1/quick-jobs/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idempotency_key:quickKey})});show(outcome.cancelled?'Stopping the bounded fetch…':'The job has already finished.');if(outcome.cancelled)quickKey=''}catch(error){show(error.message,true)}};
+ async function refreshRecent(){
+  const list=$('recent-list');list.replaceChildren();
+  try{const data=await api('/v1/recent-jobs');if(!data.jobs.length){add(list,'li','No saved pages yet.');return}
+   for(const job of data.jobs){const row=add(list,'li','');const info=add(row,'span','');add(info,'strong',job.requested_url);add(info,'small',' · '+new Date(job.created_at).toLocaleString()+' · '+job.status);
+    const open=add(row,'button','Open','btn');open.type='button';open.onclick=()=>load(job.job_id).catch(error=>show(error.message,true));}
+  }catch{add(list,'li','Recent pages are available in local UI mode or with an API key.');}
+ }
+ $('recent-refresh').onclick=refreshRecent;
+ function renderAutomatic(data){
+  const root=$('automatic-result');root.replaceChildren();if(!data)return;
+  const intro=add(root,'section','','auto-overview');const kind=data.page_type?.value||'general';
+  add(intro,'span',kind==='general'?'Page type unclear':kind.replaceAll('_',' '),'chip');
+  add(intro,'h3','What this page says');add(intro,'p',data.overview?.text||'Could not confirm a short overview from this page.');
+  if(data.page_type?.confidence==='uncertain')add(intro,'p','Page type is uncertain; the facts below are tied to captured source.','hint');
+  if((data.groups||[]).some(group=>group.startsWith('Plan: ')))add(intro,'p','Plans are kept separate. Choose a named plan under More options for a focused vendor row.','hint');
+  for(const group of data.groups||[]){const section=add(root,'section','','auto-group');add(section,'h3',group);const grid=add(section,'div','','auto-facts');
+   const items=(data.facts||[]).filter(item=>item.group===group);
+   for(const [index,fact] of items.entries()){
+    const holder=index<6?grid:add(section,'div','','auto-facts');if(index===6){const more=add(section,'details','');add(more,'summary','Show more facts');holder.remove();for(const extra of items.slice(6))renderAutoFact(more,extra);break}
+    renderAutoFact(holder,fact);
+   }
+  }
+ }
+ function renderAutoFact(root,fact){
+  const card=add(root,'div','','auto-fact');add(card,'strong',fact.label);
+  const label=fact.state==='found_in_source'?'Found on page':fact.state==='ambiguous'?'Could not confirm one value':fact.state==='blocked'?'Blocked':'Could not confirm';
+  add(card,'small',label,'chip'+(fact.state==='found_in_source'?'':' warn'));
+  const format=value=>String(value.value)+(value.currency?' '+value.currency:'')+(value.unit?' per '+value.unit:'')+(value.billing_period?' · billed '+value.billing_period+'ly':'');
+  const display=fact.value===null||fact.value===undefined?(fact.alternatives?.length?fact.alternatives.map(format).join(' / '):'No supported value'):format(fact);
+  add(card,'p',display,'value');
+  for(const ev of fact.evidence||[]){const detail=add(card,'details','');add(detail,'summary','Inspect source');add(detail,'blockquote',ev.excerpt||'');
+   const link=add(detail,'a','Open source');link.href=ev.source_url;link.target='_blank';link.rel='noopener noreferrer';
+   add(detail,'p',ev.fetched_at+' · '+ev.locator,'hint');}
+ }
  $('quick-form').addEventListener('submit',async event=>{
   event.preventDefault();if(busy)return;clearNotice();
-  try{controls();setBusy(true,'Checking site access and capturing the page. This can take up to 20 seconds.');
-   const result=await api('/v1/quick-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:$('quick-url').value})});
-   $('job').value=result.job_id;await load(result.job_id,result);
-  }catch(error){show(error.message,true)}finally{setBusy(false)}
+  try{controls();if(quickUrl!==$('quick-url').value||!quickKey){quickUrl=$('quick-url').value;quickKey=crypto.randomUUID()}
+   setBusy(true,'Checking site access and capturing the page. This can take up to 20 seconds.');$('quick-cancel').hidden=false;
+   const result=await api('/v1/quick-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:quickUrl,idempotency_key:quickKey})});
+   $('job').value=result.job_id;await load(result.job_id,result);await refreshRecent();
+   $('result-panel').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'start'});
+   quickKey='';
+  }catch(error){show(error.message,true)}finally{setBusy(false);$('quick-cancel').hidden=true}
  });
  $('create-form').addEventListener('submit',async event=>{
   event.preventDefault(); if(busy)return;clearNotice();
@@ -86,7 +127,7 @@ a{color:#075d71}a:focus-visible,button:focus-visible,input:focus-visible,select:
    const payload={url:$('url').value,schema:{type:'object',properties},target_plan:$('target-plan').value.trim()||null,allowed_hostnames:[],page_hints:[],options:{max_pages:Number($('max-pages').value),max_depth:Number($('max-depth').value),deadline_seconds:Number($('deadline').value),max_http_requests:Number($('max-gets').value)},idempotency_key:crypto.randomUUID()};
    setBusy(true,'Fetching robots policy and pages. This may take up to the deadline…');
    const result=await api('/v1/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-   $('job').value=result.job_id;await load(result.job_id,result);
+   $('job').value=result.job_id;await load(result.job_id,result);await refreshRecent();
   } catch(error){show(error.message,true)} finally {setBusy(false)}
  });
  $('open-form').addEventListener('submit',async event=>{event.preventDefault();clearNotice();try{controls();await load($('job').value.trim())}catch(error){show(error.message,true)}});
@@ -98,14 +139,19 @@ a{color:#075d71}a:focus-visible,button:focus-visible,input:focus-visible,select:
   const [saved,history,evidence]=await Promise.all([api('/v1/jobs/'+id+'/reviews'),api('/v1/jobs/'+id+'/review-history'),api('/v1/jobs/'+id+'/review-evidence')]);
   currentId=id;activeField=history.sessions.find(item=>item.stopped_at===null&&item.reviewer_id===currentReviewer)?.field_name||'';
   $('empty').hidden=true;$('result-panel').hidden=false;$('result-title').textContent=result.requested_url;
-  $('result-status').textContent=result.status;$('result-status').className=stateChip(result.status==='complete'?'verified':result.status);
+  renderAutomatic(result.automatic_result);$('technical-review').open=!result.automatic_result;
+  const useful=result.automatic_result?.facts?.some(item=>item.state==='found_in_source');
+  $('result-status').textContent=result.automatic_result?(useful?'Source facts found':result.status==='failed'?'Could not access page':'Could not confirm facts'):result.status;
+  $('result-status').className=stateChip(useful||result.status==='complete'?'verified':result.status);
   const meta=$('job-meta');meta.replaceChildren();for(const [title,value] of [['Job ID',id],['GETs started',String(result.usage.http_requests_started??'—')],['Elapsed',String(result.usage.elapsed_seconds??'—')+' s']]){const card=add(meta,'div','','metric');add(card,'small',title);add(card,'b',value,title==='Job ID'?'code':'')}
-  const errors=$('page-errors');errors.replaceChildren();const all=[...(result.errors||[]),...(result.pages||[]).filter(page=>page.status==='error').map(page=>({code:page.error_code,url:page.requested_url}))];if(all.length){const box=add(errors,'div','','panel-body');add(box,'h3','Page and access errors');const list=add(box,'ul','','error-list');for(const error of all)add(list,'li',(error.code||'ERROR')+' · '+(error.url||'')+(error.message?' · '+error.message:''))}
+  const errors=$('page-errors');errors.replaceChildren();const all=[...(result.errors||[]),...(result.pages||[]).filter(page=>page.status==='error').map(page=>({code:page.error_code,url:page.requested_url}))];if(all.length){const box=add(errors,'div','','panel-body');add(box,'h3','Page and access errors');const list=add(box,'ul','','error-list');const seen=new Set();for(const error of all){const key=(error.code||'')+'|'+(error.url||'');if(seen.has(key))continue;seen.add(key);add(list,'li',errorText(error.code)+' · '+(error.url||''))}}
   const reviewRoot=$('reviews');reviewRoot.replaceChildren();const names=Object.keys(result.fields||{});if(!names.length)add(reviewRoot,'p','No fields returned.');
   for(const name of names)renderField(reviewRoot,id,name,result.fields[name],evidence[name]||[],saved[name],history);
   const historyRoot=$('history');historyRoot.replaceChildren();if(!history.sessions.length&&!history.edits.length)add(historyRoot,'p','No reviews yet.');else{const list=add(historyRoot,'ol','','history-list');for(const item of history.sessions)add(list,'li',`${item.field_name}: ${item.reviewer_id} · ${item.stopped_at?'stopped, '+item.elapsed_seconds+' s':'active'}`);for(const item of history.edits)add(list,'li',`${item.field_name}: ${item.reviewer_id} · ${item.verdict} · ${item.reason||'no reason'}`)}
-  show('Page inspected. '+names.filter(name=>result.fields[name].state==='verified').length+' facts have source evidence; unavailable facts remain blank.');
+  const count=result.automatic_result?.facts?.filter(item=>item.state==='found_in_source').length??names.filter(name=>result.fields[name].state==='verified').length;
+  show('Loaded '+names.length+' fields. '+count+' facts have source evidence.');
  }
+ $('delete-job').onclick=async()=>{if(!currentId)return;try{await api('/v1/jobs/'+currentId,{method:'DELETE'});currentId='';$('result-panel').hidden=true;$('empty').hidden=false;show('Job deleted from this workspace.');await refreshRecent()}catch(error){show(error.message,true)}};
  function renderField(root,id,name,field,evidence,saved,history){
   const labels={page_title:'Page title',main_heading:'Main heading',page_description:'Description',site_name:'Site name'};
   const section=add(root,'section','','review-card');section.setAttribute('aria-label',name+' review');const heading=add(section,'div','','field-title');add(heading,'h3',labels[name]||name.replaceAll('_',' '));add(heading,'span',field.state==='verified'?'Found on page':field.state,stateChip(field.state));
@@ -129,6 +175,7 @@ a{color:#075d71}a:focus-visible,button:focus-visible,input:focus-visible,select:
   save.onclick=async()=>{if(!verdict.value)return show('Choose a verdict.',true);try{const data=await call('PUT','',{verdict:verdict.value,corrected_value:corrected.value||null,corrected_source_url:source.value||null,corrected_excerpt:excerpt.value||null,reason:reason.value,reviewer_id:currentReviewer});status.textContent='Saved · '+data.time_spent_seconds+' seconds';show('Decision saved.');await load(id)}catch(error){show(error.message,true)}};
  }
  $('export').onclick=async()=>{if(!currentId)return;try{const data=await api('/v1/jobs/'+currentId+'/labels');const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='verified-extraction-review-'+currentId+'.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);show('Review export downloaded. Keep it away from blind labelers.')}catch(error){show(error.message,true)}};
+ refreshRecent();
 })();
 </script>
 </body>
