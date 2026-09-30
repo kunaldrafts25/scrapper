@@ -6,6 +6,7 @@ import logging
 import os
 import secrets
 import time
+from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException, Depends, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
@@ -109,92 +110,14 @@ def get_raw_snapshot(job_id: str, digest: str, tenant_id: str = Depends(tenant))
 
 @app.get("/review", response_class=HTMLResponse)
 def review_app():
-    """Token stays in page memory; all customer content enters through textContent."""
+    """Serve the local workbench with a per-response nonce and no remote assets."""
     nonce = secrets.token_urlsafe(18)
-    document = """<!doctype html><html><head><meta charset='utf-8'><title>Evidence review</title></head>
-<body><h1>Evidence review</h1><form id='form'><label>Job ID <input id='job' required></label>
-<label>Bearer key <input id='key' type='password' required autocomplete='off'></label>
-<label>Reviewer ID <input id='reviewer' required></label>
-<button>Load</button></form><button id='export' type='button' disabled>Download labels</button><div id='result'></div>
-<script nonce='NONCE'>
-const form=document.getElementById('form'), out=document.getElementById('result'), exportButton=document.getElementById('export');
-let activeId='', activeHeaders=null, activeReviewer='', activeField='';
-function add(parent,tag,value){const node=document.createElement(tag);node.textContent=value;parent.append(node);return node;}
-form.addEventListener('submit',async event=>{event.preventDefault();out.replaceChildren();
- const id=document.getElementById('job').value.trim(), key=document.getElementById('key').value;
- activeReviewer=document.getElementById('reviewer').value.trim();
- if(!/^[0-9a-f-]{36}$/i.test(id)){add(out,'p','Invalid job ID');return;}
- const headers={Authorization:'Bearer '+key};
- const response=await fetch('/v1/jobs/'+id,{headers,cache:'no-store'});
- if(!response.ok){add(out,'p','Could not load job ('+response.status+')');return;}
- const job=await response.json();
- activeId=id;activeHeaders=headers;exportButton.disabled=false;
- const reviewResponse=await fetch('/v1/jobs/'+id+'/reviews',{headers,cache:'no-store'});
- const saved=reviewResponse.ok?await reviewResponse.json():{};
- const historyResponse=await fetch('/v1/jobs/'+id+'/review-history',{headers,cache:'no-store'});
- const history=historyResponse.ok?await historyResponse.json():{sessions:[]};
- activeField=history.sessions.find(item=>item.stopped_at===null && item.reviewer_id===activeReviewer)?.field_name||'';
- const evidenceResponse=await fetch('/v1/jobs/'+id+'/review-evidence',{headers,cache:'no-store'});
- const evidenceMap=evidenceResponse.ok?await evidenceResponse.json():{};
- for(const [name,field] of Object.entries(job.fields)){
-  const section=add(out,'section','');add(section,'h2',name+' — '+field.state);
-  add(section,'p','Value: '+JSON.stringify(field.value)+(field.unit?' / '+field.unit:'')+(field.currency?' '+field.currency:''));
-  const evidence=evidenceMap[name]||[];
-  for(const item of evidence){add(section,'h3',item.source_url+' '+item.locator);add(section,'blockquote',item.excerpt);
-   if(item.source_node){add(section,'p','Source node:');add(section,'mark',item.source_node);}
-   if(!item.source_bound){add(section,'p','Source binding could not be checked');continue;}
-   const pre=add(section,'pre','');
-   const raw=item.capture_text||'', position=item.source_node?raw.indexOf(item.source_node):-1;
-   if(position>=0){pre.append(document.createTextNode(raw.slice(0,position)));
-    add(pre,'mark',item.source_node);pre.append(document.createTextNode(raw.slice(position+item.source_node.length)));}
-   else pre.textContent=raw;}
-  const verdict=section.appendChild(document.createElement('select'));
-  for(const choice of ['','correct','wrong','unsupported','conflicting','uncertain']){
-   const option=document.createElement('option');option.value=choice;option.textContent=choice||'Choose verdict';verdict.append(option);}
-  verdict.value=saved[name]?.verdict||'';
-  const corrected=section.appendChild(document.createElement('input'));corrected.placeholder='Corrected value (optional)';corrected.value=saved[name]?.corrected_value||'';
-  const source=section.appendChild(document.createElement('input'));source.placeholder='Corrected source URL (optional)';source.value=saved[name]?.corrected_source_url||'';
-  const excerpt=section.appendChild(document.createElement('input'));excerpt.placeholder='Supporting excerpt (optional)';excerpt.value=saved[name]?.corrected_excerpt||'';
-  const reason=section.appendChild(document.createElement('textarea'));reason.placeholder='Short reason';reason.value=saved[name]?.reason||'';
-  const timer=add(section,'p','Recorded seconds: '+(saved[name]?.time_spent_seconds||0));
-  const startButton=add(section,'button','Start review'), stopButton=add(section,'button','Stop review');
-  startButton.type='button';stopButton.type='button';
-  const save=add(section,'button','Save verdict'), status=add(section,'p',activeField===name?'Review session is active':'');save.type='button';
-  startButton.addEventListener('click',async()=>{
-   if(activeField){status.textContent='Stop the active field first';return;}
-   const response=await fetch('/v1/jobs/'+id+'/reviews/'+encodeURIComponent(name)+'/start',
-    {method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({reviewer_id:activeReviewer})});
-   if(response.ok){activeField=name;status.textContent='Reviewing '+name;}else status.textContent='Start failed ('+response.status+')';
-  });
-  stopButton.addEventListener('click',async()=>{
-   if(activeField!==name){status.textContent='This field is not active';return;}
-   const response=await fetch('/v1/jobs/'+id+'/reviews/'+encodeURIComponent(name)+'/stop',
-    {method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({reviewer_id:activeReviewer})});
-   if(response.ok){activeField='';const data=await response.json();status.textContent='Stopped; session '+data.elapsed_seconds+' seconds';}
-   else status.textContent='Stop failed ('+response.status+')';
-  });
-  save.addEventListener('click',async()=>{
-   if(!verdict.value){status.textContent='Choose a verdict';return;}
-   const body={verdict:verdict.value,corrected_value:corrected.value||null,corrected_source_url:source.value||null,
-    corrected_excerpt:excerpt.value||null,reason:reason.value,reviewer_id:activeReviewer};
-   const response=await fetch('/v1/jobs/'+id+'/reviews/'+encodeURIComponent(name),{method:'PUT',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(body)});
-   status.textContent=response.ok?'Saved':'Save failed ('+response.status+')';
-   if(response.ok){const data=await response.json();timer.textContent='Recorded seconds: '+data.time_spent_seconds;}
-  });
- }
-});
-exportButton.addEventListener('click',async()=>{
- if(!activeId||!activeHeaders)return;
- const response=await fetch('/v1/jobs/'+activeId+'/labels',{headers:activeHeaders,cache:'no-store'});
- if(!response.ok){add(out,'p','Export failed ('+response.status+')');return;}
- const data=await response.json(), blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
- const link=document.createElement('a'), objectUrl=URL.createObjectURL(blob);
- link.href=objectUrl;link.download='verified-extraction-labels.json';link.click();setTimeout(()=>URL.revokeObjectURL(objectUrl),1000);
-});
-</script></body></html>""".replace("NONCE", nonce)
-    return HTMLResponse(document, headers={"Content-Security-Policy": f"default-src 'none'; script-src 'nonce-{nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'",
-                                         "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
-                                         "X-Content-Type-Options": "nosniff"})
+    document = Path(__file__).with_name("workbench.html").read_text(encoding="utf-8").replace("__NONCE__", nonce)
+    return HTMLResponse(document, headers={"Content-Security-Policy":
+        f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
+        "connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'",
+        "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff"})
 
 
 @app.get("/v1/jobs/{job_id}/review", response_class=HTMLResponse)

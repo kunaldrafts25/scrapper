@@ -1,4 +1,7 @@
-# Exact proposed real-site scope — approval pending
+# Exact proposed real-site scope ? run status
+
+The user authorized the **IANA smoke and 12 development hosts** for 30 September 2026, replacing the proposed date for those scopes. Their outcomes are in [the live development report](LIVE_DEVELOPMENT_2026-09-30.md). This table remains the frozen 24-site proposal. The 12 held-out product pages were not captured because the analyst hourly rate and threshold confirmation remain pending. The ignored local approval record preserves the authorizing instruction?s hash and actual run timestamps.
+
 
 This is a proposal, not authorization. Every site currently has `access_basis=UNVERIFIED_PUBLIC_PAGE`, `robots_status=NOT_CHECKED`, and `approval_record=PENDING` in `candidate_targets.csv`. The URLs and plans are unverified offline hypotheses. The split was fixed before scraper output. Rejected sites remain in `rejection_log.csv`; none has been substituted.
 
@@ -35,4 +38,4 @@ This is a proposal, not authorization. Every site currently has `access_basis=UN
 
 **Separate smoke check, also pending approval:** `https://www.iana.org/domains/root/db/com.html`, hostname `www.iana.org` only, at most 10 GETs including robots and redirects, one page, depth zero, 20-second deadline, no account or provider spend, local storage, seven-day retention. Proposed window: 2026-10-15 09:00–10:00 Asia/Kolkata. See `ONE_SITE_TEST_PLAN.md`. This check is outside the 480-GET evaluation limit.
 
-Approval must cover the exact scope and the preregistered thresholds and labor rate. After approval, bounded robots/access preflight must be counted within each site's 20-GET ceiling, reducing the remaining product-job budget accordingly. Denied sites remain outcomes. Execution validation requires the approval record and allowed robots status before crawling permitted targets.
+The completed smoke and development runs had a separate exact-scope authorization for 30 September 2026. Before held-out capture, the customer must still confirm the analyst rate and preregistered thresholds and the execution inventory must resolve its pending access and approval fields. Bounded robots/access preflight counts within each site's 20-GET ceiling. Denied sites remain outcomes.

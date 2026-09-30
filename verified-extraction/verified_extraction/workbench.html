@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verified Extraction · Workbench</title>
+<style nonce="__NONCE__">
+:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#172b39;background:#f5f7f8;line-height:1.5}
+*{box-sizing:border-box}body{margin:0}button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.55}
+a{color:#075d71}a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid #008a91;outline-offset:2px}
+.shell{max-width:1440px;margin:auto;padding:0 24px 48px}.top{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:22px 0;border-bottom:1px solid #cad5d9}.brand{display:flex;align-items:center;gap:12px;font-weight:800;letter-spacing:-.03em;font-size:19px}.mark{display:grid;place-items:center;width:32px;height:32px;border-radius:9px;background:#11657a;color:white;font-size:18px}.top small{color:#526875;font-size:13px}.intro{display:flex;align-items:end;justify-content:space-between;gap:24px;padding:34px 0 28px}.eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:12px;font-weight:750;color:#0c7181}h1{font-size:clamp(30px,4vw,46px);letter-spacing:-.055em;line-height:1.08;margin:6px 0 10px}h2{font-size:20px;letter-spacing:-.025em;margin:0 0 5px}h3{font-size:16px;margin:0 0 8px}.muted,.hint{color:#526875}.hint{font-size:13px}.intro p{max-width:60ch;margin:0}.layout{display:grid;grid-template-columns:minmax(310px,380px) minmax(0,1fr);gap:20px;align-items:start}.rail{display:grid;gap:18px}.panel{background:#fff;border:1px solid #d3dde0;border-radius:16px;box-shadow:0 2px 8px #132e4010}.panel-head{padding:21px 23px;border-bottom:1px solid #e2e9eb}.panel-body{padding:22px 23px}.stack{display:grid;gap:15px}.field{display:grid;gap:5px}.field label,.field>span{font-size:13px;font-weight:700}.field input,.field select,.field textarea{width:100%;min-height:42px;border:1px solid #aabdc4;border-radius:8px;padding:9px 11px;background:#fff;color:#172b39}.field textarea{min-height:70px;resize:vertical}.row{display:flex;gap:10px;align-items:center}.row>*{min-width:0}.row>.field{flex:1}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.actions{display:flex;flex-wrap:wrap;gap:9px}.btn{border:1px solid #a9bac0;background:white;color:#173644;border-radius:8px;padding:9px 14px;font-weight:700;min-height:40px}.btn:hover:not(:disabled){background:#edf5f6}.btn.primary{background:#11657a;border-color:#11657a;color:white}.btn.primary:hover:not(:disabled){background:#084b5e}.btn.quiet{border-color:transparent}.field-row{display:grid;grid-template-columns:minmax(0,1fr) 90px 36px;gap:8px;align-items:end}.field-row .btn{padding:8px}.notice{border-radius:9px;padding:11px 13px;background:#eaf4f5;color:#144b58;font-size:14px}.notice.error{background:#fff0eb;color:#8e341d}.notice[hidden],.panel[hidden],.empty[hidden]{display:none}.main{min-width:0;display:grid;gap:18px}.empty{padding:44px 30px;text-align:center}.empty .icon{font-size:28px;color:#18758a}.status-line{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}.chip{display:inline-flex;border-radius:99px;background:#eaf4f5;color:#115d70;padding:4px 10px;font-size:12px;font-weight:750}.chip.warn{background:#fff1dc;color:#83551a}.chip.bad{background:#fff0eb;color:#8e341d}.job-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:16px}.metric{padding:12px;border:1px solid #e0e9eb;border-radius:9px}.metric b{display:block;font-size:18px}.metric small{color:#526875}.code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere;font-size:12px}.error-list{padding-left:20px;margin-bottom:0}.review-card{border-top:1px solid #e2e9eb;padding:22px 23px}.review-card:first-child{border-top:0}.field-title{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}.value{font-size:21px;font-weight:750;overflow-wrap:anywhere;margin:9px 0}.evidence-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:15px;margin:16px 0}.evidence-box{background:#f6f9f9;border:1px solid #dfe8ea;border-radius:10px;padding:15px;min-width:0}.evidence-box blockquote{border-left:3px solid #2f8495;margin:10px 0;padding-left:11px;white-space:pre-wrap;overflow-wrap:anywhere}.evidence-box pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto;font-size:12px;margin:10px 0 0}.evidence-box mark{background:#ffe7ac}.evidence-box details{margin-top:12px}.review-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.review-grid .wide{grid-column:1/-1}.session{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin:14px 0}.history-list{margin:0;padding-left:20px}.history-list li{margin:7px 0}.footer{margin-top:30px;color:#526875;font-size:12px}.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@media(max-width:850px){.layout{grid-template-columns:1fr}.intro{display:block}.job-meta{grid-template-columns:1fr 1fr}.evidence-layout{grid-template-columns:1fr}}@media(max-width:540px){.shell{padding:0 14px 32px}.top{padding:15px 0}.top small{display:none}.panel-head,.panel-body,.review-card{padding:17px}.job-meta,.review-grid{grid-template-columns:1fr}.review-grid .wide{grid-column:auto}.field-row{grid-template-columns:minmax(0,1fr) 85px 36px}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
+.mt12{margin-top:12px}.mt16{margin-top:16px}.field-row .label-cell{grid-column:1;grid-row:2}.field-row .type-cell{grid-column:2;grid-row:1 / 3}.field-row .remove-cell{grid-column:3;grid-row:1 / 3}
+</style>
+</head>
+<body>
+<div class="shell">
+<header class="top"><div class="brand"><span class="mark" aria-hidden="true">✓</span>Verified Extraction</div><small>Local evidence workbench · public HTML</small></header>
+<div class="intro"><div><span class="eyebrow">Capture · inspect · decide</span><h1>Every claim needs a source.</h1><p class="muted">Submit a bounded crawl, inspect the captured evidence, and record timed review decisions. Jobs may take up to 45 seconds.</p></div></div>
+<div class="layout">
+<aside class="rail" aria-label="Job controls">
+<section class="panel"><div class="panel-head"><h2>New extraction</h2><span class="hint">3–10 named scalar fields</span></div><form id="create-form" class="panel-body stack">
+<div class="field"><label for="url">Public page URL</label><input id="url" type="url" required placeholder="https://example.org/pricing" autocomplete="url"></div>
+<div class="field"><label for="key">Bearer key</label><input id="key" type="password" required autocomplete="off" spellcheck="false"><span class="hint">Held in this tab’s memory. Never included in a URL.</span></div>
+<div class="field"><label for="reviewer">Reviewer ID</label><input id="reviewer" required maxlength="80" autocomplete="off" placeholder="analyst-1"></div>
+<div><div class="status-line"><strong>Fields</strong><button id="add-field" class="btn quiet" type="button">+ Add field</button></div><p class="hint">Use the exact visible label on the page. Titles drive extraction.</p><div id="fields" class="stack"></div></div>
+<details><summary>Bounded crawl options</summary><div class="grid2 mt12">
+<div class="field"><label for="max-pages">Pages (1–8)</label><input id="max-pages" type="number" min="1" max="8" value="3" required></div>
+<div class="field"><label for="max-depth">Depth (0–2)</label><input id="max-depth" type="number" min="0" max="2" value="1" required></div>
+<div class="field"><label for="deadline">Deadline seconds (2–45)</label><input id="deadline" type="number" min="2" max="45" value="20" required></div>
+<div class="field"><label for="max-gets">GET limit (1–50)</label><input id="max-gets" type="number" min="1" max="50" value="20" required></div></div>
+<p class="hint">Robots checks and redirects count. Crawls stay on the URL’s hostname.</p></details>
+<button id="submit" class="btn primary" type="submit">Run extraction</button></form></section>
+<section class="panel"><div class="panel-head"><h2>Open a job</h2><span class="hint">Use the key and reviewer above</span></div><form id="open-form" class="panel-body stack"><div class="field"><label for="job">Job ID</label><input id="job" required placeholder="UUID" spellcheck="false"></div><button class="btn" type="submit">Load saved result</button></form></section>
+</aside>
+<main class="main" id="main"><div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+<section class="panel empty" id="empty"><div class="icon" aria-hidden="true">◇</div><h2>Ready to inspect</h2><p class="muted">Run a job or reopen one by ID. Results, evidence, and review history appear here.</p></section>
+<section class="panel" id="result-panel" hidden><div class="panel-head"><div class="status-line"><div><span class="eyebrow">Current job</span><h2 id="result-title">Result</h2></div><span id="result-status" class="chip"></span></div><div class="job-meta" id="job-meta"></div><div class="actions mt16"><button id="export" class="btn" type="button">Download review export</button><button id="refresh" class="btn" type="button">Refresh</button></div></div><div id="page-errors"></div><div id="reviews"></div><div class="panel-body"><h3>Review history</h3><div id="history" class="hint">No reviews yet.</div></div></section>
+</main></div>
+<footer class="footer">Source-backed claims still require human judgment. The local workbench does not create independent blind labels.</footer>
+</div>
+<script nonce="__NONCE__">
+(() => {
+ const $ = id => document.getElementById(id);
+ let currentId = '', currentReviewer = '', activeField = '', busy = false;
+ const headers = () => ({Authorization:'Bearer '+$('key').value});
+ const add = (parent, tag, value, className='') => {const node=document.createElement(tag);node.textContent=value; if(className)node.className=className;parent.append(node);return node};
+ const show = (message, error=false) => {const box=$('notice');box.textContent=message;box.className='notice'+(error?' error':'');box.hidden=false};
+ const clearNotice = () => {$('notice').hidden=true};
+ const api = async (path, options={}) => {
+  let response;
+  try { response=await fetch(path,{...options,headers:{...headers(),...(options.headers||{})},cache:'no-store'}); }
+  catch {throw new Error('Network error. Check that the local server is running.');}
+  let data; try {data=await response.json()} catch {data={}};
+  if(!response.ok){const detail=data.detail||{};throw new Error((detail.message||detail.code||'Request failed')+' (HTTP '+response.status+')')}
+  return data;
+ };
+ const fieldRow = (name='',title='',type='string') => {
+  const row=add($('fields'),'div','','field-row');row.className='field-row';
+  const nameBox=add(row,'div','','field');const nameLabel=add(nameBox,'label','Field key');const key=add(nameBox,'input','');key.required=true;key.maxLength=80;key.placeholder='support_channel';key.value=name;nameLabel.htmlFor=key.id='field-key-'+crypto.randomUUID();
+  const titleBox=add(row,'div','','field label-cell');const titleLabel=add(titleBox,'label','Page label');const label=add(titleBox,'input','');label.required=true;label.maxLength=80;label.placeholder='Support';label.value=title;titleLabel.htmlFor=label.id='field-label-'+crypto.randomUUID();
+  const typeBox=add(row,'div','','field type-cell');const typeLabel=add(typeBox,'label','Type');const select=add(typeBox,'select','');typeLabel.htmlFor=select.id='field-type-'+crypto.randomUUID();for(const value of ['string','number','integer','boolean']){const opt=add(select,'option',value);opt.value=value}select.value=type;
+  const remove=add(row,'button','Remove','btn remove-cell');remove.type='button';remove.setAttribute('aria-label','Remove field');remove.onclick=()=>{if($('fields').children.length>3)row.remove();else show('At least three fields are required.',true)};
+ };
+ [['plan','Plan','string'],['price','Price','number'],['support','Support','string']].forEach(row=>fieldRow(...row));
+ $('add-field').onclick=()=>{if($('fields').children.length>=10)return show('The schema supports at most ten fields.',true);fieldRow()};
+ const controls=()=>{if(!$('key').value||!$('reviewer').value.trim())throw new Error('Enter a bearer key and reviewer ID.');currentReviewer=$('reviewer').value.trim()};
+ const setBusy=(value,message)=>{busy=value;$('submit').disabled=value;if(value)show(message)};
+ $('create-form').addEventListener('submit',async event=>{
+  event.preventDefault(); if(busy)return;clearNotice();
+  try {
+   controls();const properties={};
+   for(const row of $('fields').children){const inputs=row.querySelectorAll('input');const key=inputs[0].value.trim(), title=inputs[1].value.trim();if(!/^[A-Za-z_][A-Za-z0-9_]{0,79}$/.test(key))throw new Error('Field keys use letters, digits, and underscores, starting with a letter or underscore.');if(!title)throw new Error('Each field needs a page label.');if(properties[key])throw new Error('Field keys must be unique.');properties[key]={type:row.querySelector('select').value,title};}
+   if(Object.keys(properties).length<3||Object.keys(properties).length>10)throw new Error('Use 3–10 fields.');
+   const payload={url:$('url').value,schema:{type:'object',properties},allowed_hostnames:[],page_hints:[],options:{max_pages:Number($('max-pages').value),max_depth:Number($('max-depth').value),deadline_seconds:Number($('deadline').value),max_http_requests:Number($('max-gets').value)},idempotency_key:crypto.randomUUID()};
+   setBusy(true,'Fetching robots policy and pages. This may take up to the deadline…');
+   const result=await api('/v1/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+   $('job').value=result.job_id;await load(result.job_id,result);
+  } catch(error){show(error.message,true)} finally {setBusy(false)}
+ });
+ $('open-form').addEventListener('submit',async event=>{event.preventDefault();clearNotice();try{controls();await load($('job').value.trim())}catch(error){show(error.message,true)}});
+ $('refresh').onclick=async()=>{try{await load(currentId)}catch(error){show(error.message,true)}};
+ const stateChip=(state)=>state==='verified'?'chip':state==='missing'||state==='conflicting'?'chip warn':'chip bad';
+ async function load(id, supplied){
+  if(!/^[0-9a-f-]{36}$/i.test(id))throw new Error('Enter a valid job ID.');controls();show('Loading result and review history…');
+  const result=supplied||await api('/v1/jobs/'+id);
+  const [saved,history,evidence]=await Promise.all([api('/v1/jobs/'+id+'/reviews'),api('/v1/jobs/'+id+'/review-history'),api('/v1/jobs/'+id+'/review-evidence')]);
+  currentId=id;activeField=history.sessions.find(item=>item.stopped_at===null&&item.reviewer_id===currentReviewer)?.field_name||'';
+  $('empty').hidden=true;$('result-panel').hidden=false;$('result-title').textContent=result.requested_url;
+  $('result-status').textContent=result.status;$('result-status').className=stateChip(result.status==='complete'?'verified':result.status);
+  const meta=$('job-meta');meta.replaceChildren();for(const [title,value] of [['Job ID',id],['GETs started',String(result.usage.http_requests_started??'—')],['Elapsed',String(result.usage.elapsed_seconds??'—')+' s']]){const card=add(meta,'div','','metric');add(card,'small',title);add(card,'b',value,title==='Job ID'?'code':'')}
+  const errors=$('page-errors');errors.replaceChildren();const all=[...(result.errors||[]),...(result.pages||[]).filter(page=>page.status==='error').map(page=>({code:page.error_code,url:page.requested_url}))];if(all.length){const box=add(errors,'div','','panel-body');add(box,'h3','Page and access errors');const list=add(box,'ul','','error-list');for(const error of all)add(list,'li',(error.code||'ERROR')+' · '+(error.url||'')+(error.message?' · '+error.message:''))}
+  const reviewRoot=$('reviews');reviewRoot.replaceChildren();const names=Object.keys(result.fields||{});if(!names.length)add(reviewRoot,'p','No fields returned.');
+  for(const name of names)renderField(reviewRoot,id,name,result.fields[name],evidence[name]||[],saved[name],history);
+  const historyRoot=$('history');historyRoot.replaceChildren();if(!history.sessions.length&&!history.edits.length)add(historyRoot,'p','No reviews yet.');else{const list=add(historyRoot,'ol','','history-list');for(const item of history.sessions)add(list,'li',`${item.field_name}: ${item.reviewer_id} · ${item.stopped_at?'stopped, '+item.elapsed_seconds+' s':'active'}`);for(const item of history.edits)add(list,'li',`${item.field_name}: ${item.reviewer_id} · ${item.verdict} · ${item.reason||'no reason'}`)}
+  show('Loaded '+names.length+' fields. '+(result.status==='partial'?'Some fields are unresolved.':'Review source evidence before accepting claims.'));
+ }
+ function renderField(root,id,name,field,evidence,saved,history){
+  const section=add(root,'section','','review-card');section.setAttribute('aria-label',name+' review');const heading=add(section,'div','','field-title');add(heading,'h3',name);add(heading,'span',field.state,stateChip(field.state));
+  add(section,'p',field.value===null?'No accepted value':String(field.value)+(field.unit?' / '+field.unit:'')+(field.currency?' '+field.currency:''),'value');if(field.reason)add(section,'p',field.reason,'hint');
+  const evidenceLayout=add(section,'div','','evidence-layout');if(!evidence.length)add(evidenceLayout,'p','No source evidence for this field.','hint');
+  for(const item of evidence){const box=add(evidenceLayout,'div','','evidence-box');add(box,'strong','Captured claim');add(box,'blockquote',item.excerpt||'');add(box,'p',(item.source_url||'')+' · '+(item.locator||''),'code');add(box,'p','SHA-256: '+(item.snapshot_hash||'')+' · '+(item.fetched_at||''),'code');if(!item.source_bound)add(box,'p','Source binding unavailable','hint');if(item.source_node){add(box,'p','Source node:','hint');add(box,'pre',item.source_node)}if(item.capture_text){const details=add(box,'details','');add(details,'summary','View captured text');add(details,'pre',item.capture_text)}}
+  const controls=add(section,'div','','review-grid');
+  const input=(label,tag,value,wide=false)=>{const wrap=add(controls,'div','','field'+(wide?' wide':''));const idPart=crypto.randomUUID();const labelEl=add(wrap,'label',label);const el=add(wrap,tag,'');el.id=idPart;labelEl.htmlFor=idPart;el.value=value||'';return el};
+  const verdict=input('Verdict','select','');for(const choice of [['','Choose verdict'],['correct','Correct'],['wrong','Wrong'],['unsupported','Unsupported'],['conflicting','Conflicting'],['uncertain','Uncertain']]){const option=add(verdict,'option',choice[1]);option.value=choice[0]}verdict.value=saved?.verdict||'';
+  const corrected=input('Corrected value','input',saved?.corrected_value);corrected.maxLength=300;
+  const source=input('Corrected source URL','input',saved?.corrected_source_url,true);source.maxLength=2000;
+  const excerpt=input('Supporting excerpt','textarea',saved?.corrected_excerpt,true);excerpt.maxLength=1000;
+  const reason=input('Reason','textarea',saved?.reason,true);reason.maxLength=500;
+  const session=add(section,'div','','session');const start=add(session,'button','Start review','btn');const stop=add(session,'button','Stop review','btn');start.type=stop.type='button';const save=add(session,'button','Save decision','btn primary');save.type='button';
+  const status=add(section,'p',activeField===name?'Review session active':'Recorded: '+(saved?.time_spent_seconds||0)+' seconds','hint');
+  const call=async(method,suffix,body)=>api('/v1/jobs/'+id+'/reviews/'+encodeURIComponent(name)+suffix,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  start.onclick=async()=>{if(activeField)return show('Stop the current field review first.',true);try{await call('POST','/start',{reviewer_id:currentReviewer});activeField=name;status.textContent='Review session active';show('Reviewing '+name)}catch(error){show(error.message,true)}};
+  stop.onclick=async()=>{if(activeField!==name)return show('This field is not active.',true);try{const data=await call('POST','/stop',{reviewer_id:currentReviewer});activeField='';status.textContent='Session stopped: '+data.elapsed_seconds+' seconds';show('Review time recorded.')}catch(error){show(error.message,true)}};
+  save.onclick=async()=>{if(!verdict.value)return show('Choose a verdict.',true);try{const data=await call('PUT','',{verdict:verdict.value,corrected_value:corrected.value||null,corrected_source_url:source.value||null,corrected_excerpt:excerpt.value||null,reason:reason.value,reviewer_id:currentReviewer});status.textContent='Saved · '+data.time_spent_seconds+' seconds';show('Decision saved.');await load(id)}catch(error){show(error.message,true)}};
+ }
+ $('export').onclick=async()=>{if(!currentId)return;try{const data=await api('/v1/jobs/'+currentId+'/labels');const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='verified-extraction-review-'+currentId+'.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);show('Review export downloaded. Keep it away from blind labelers.')}catch(error){show(error.message,true)}};
+})();
+</script>
+</body>
+</html>

@@ -1,4 +1,7 @@
-# Controlled real-site evaluation proposal (not yet authorized)
+# Controlled real-site evaluation plan
+
+**Run status (30 September 2026):** The user authorized and ran the separate IANA smoke and the 12 frozen development hosts on this date. See [measured development findings](benchmark/LIVE_DEVELOPMENT_2026-09-30.md). The 12 held-out product pages have not been captured; their analyst hourly rate and threshold confirmation remain pending. No independent development labels, paired review, held-out metrics, or pilot decision exist yet. The later proposal language below preserves the preregistered scope and rubric; it does not describe the completed run.
+
 
 ## Proposed first customer and task
 

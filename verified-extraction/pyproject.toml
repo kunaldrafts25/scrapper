@@ -16,3 +16,6 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 include = ["verified_extraction*"]
+
+[tool.setuptools.package-data]
+verified_extraction = ["workbench.html"]

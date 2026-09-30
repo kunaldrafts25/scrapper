@@ -15,9 +15,15 @@ $env:VE_DB='data/verified_extraction.sqlite3'
 .\.venv\Scripts\python.exe -m uvicorn verified_extraction.api:app --host 127.0.0.1 --port 8000
 ```
 
-`VE_KEYS` is a JSON map of tenant IDs to bearer keys. Keep the key and database private. The service has no TLS, external authentication, tenant quotas, or durable queue; bind it to loopback only. `VE_DB` is optional and defaults to the path above. The database stores captures, request settings, results, reviews, sessions, and host leases. Old jobs and captures are removed after seven days on subsequent API access; SQLite free pages and backups are not securely erased.
+`VE_KEYS` is a JSON map of tenant IDs to bearer keys. Keep the key and database private. The service has no TLS, external authentication, tenant quotas, or durable queue; bind it to loopback only. `VE_DB` is optional and defaults to the path above. The database stores captures, request settings, results, reviews, sessions, and host leases. Old jobs and captures are removed after seven days on subsequent API access; SQLite free pages and backups are not securely erased. Evaluation bundles under ignored `benchmark/local/` require manual deletion within seven days; the current run's deadline is **7 October 2026**.
 
-## Submit and review a job
+## Use the local workbench
+
+Open `http://127.0.0.1:8000/review` after starting the server. Enter a public HTML URL, your configured bearer key, and a reviewer ID. Define three to ten fields with unique keys, exact page labels, and scalar types. Expand **Bounded crawl options** to adjust pages, depth, deadline, and GET limit, then select **Run extraction**. The workbench shows the job ID, status, request count, elapsed time, page and access errors, each field's state and evidence, and the original captured text as inert text. Copy the job ID to reopen the result later with the same tenant key.
+
+For each field, select **Start review**, inspect the capture, select **Stop review**, choose a verdict and any correction, then **Save decision**. The review history lists sessions and edits. **Download review export** produces machine-assisted review data; keep it away from independent blind labelers. The workbench reports network, authorization, validation, and partial-result states. It uses the responsive panel and source-inspection pattern of [ThreeUI Community](https://github.com/MengTo/threeui/blob/main/src/App.tsx), whose [MIT license](https://github.com/MengTo/threeui/blob/main/LICENSE) covers its application code. The adaptation is plain HTML, CSS, and JavaScript, with no ThreeUI runtime, CDN, remote assets, or decorative effect required.
+
+## Submit through the API
 
 The following example **makes live requests** to `example.com` when submitted. Use only a site you are authorized to fetch. In a second PowerShell window:
 
@@ -39,7 +45,7 @@ $result.job_id
 
 This page is unlikely to contain those labels, so expect `missing` fields. For a page containing `<p>Support: Email</p>`, the `support` field has `state: "verified"`, `value: "Email"`, and evidence with its exact excerpt, locator, URL, fetch time, and SHA-256 hash. Each job returns `fields`, `pages`, `errors`, and `usage`; `usage.http_requests_started` includes robots and redirects. A zero `estimated_internal_cost_usd` is a placeholder, not a measured total cost.
 
-Open `http://127.0.0.1:8000/review`. Enter the job ID, bearer key, and reviewer ID. For each field, select **Start review**, **Stop review**, and **Save verdict**. Sessions cannot overlap for one reviewer or job, and later edits remain in history. The page keeps the key in memory, sends it in the Authorization header, and does not put it in the URL. The authenticated API also exposes:
+Sessions cannot overlap for one reviewer or job, and later edits remain in history. The workbench keeps the key in page memory, sends it in the Authorization header, and does not put it in the URL. A per-response nonce Content Security Policy restricts scripts and styles; captured content enters the DOM as text. The authenticated API also exposes:
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -77,10 +83,10 @@ python -m benchmark.validate_targets --csv benchmark/candidate_targets.csv --mod
 python -m benchmark.validate_targets --csv benchmark/candidate_targets.csv --mode execution
 ```
 
-The last command is **expected to reject** the pending inventory. The 16-case v2 benchmark and six older smoke cases are synthetic regression fixtures, not measurements of real-site accuracy or customer value. The host-policy measurement records actual offline concurrent-worker request start and finish times. Review effort, live latency, and total cost remain unmeasured until an approved evaluation.
+The last command is **expected to reject** the inventory CSV because its approval and robots fields are still pending, even though a separate user instruction authorized the smoke and development run. The 16-case v2 benchmark and six older smoke cases are synthetic regression fixtures, not measurements of real-site accuracy or customer value. The host-policy measurement records actual offline concurrent-worker request start and finish times.
 
 ## Real-site evaluation status
 
-The [evaluation plan](EVALUATION_PLAN.md), [exact 24-site approval package](benchmark/APPROVAL_PACKAGE.md), and [separate IANA smoke plan](ONE_SITE_TEST_PLAN.md) are proposals. The candidate inventory fixes 12 development and 12 held-out hostnames, but its access basis, robots status, and approval record remain pending. **No real-site evaluation or pilot decision is complete.** No competitor adapter has been configured or measured.
+The [evaluation plan](EVALUATION_PLAN.md), [exact 24-site approval package](benchmark/APPROVAL_PACKAGE.md), and [IANA smoke plan](ONE_SITE_TEST_PLAN.md) define the scope. The user authorized the smoke and 12 development hosts for **30 September 2026**; [the live report](benchmark/LIVE_DEVELOPMENT_2026-09-30.md) records outcomes and limits. The smoke used two GETs and abstained on all three fields. Four development sites were captured, five stopped on access or size controls, and three hit deadlines. All 24 fields in the four completed jobs abstained. The 12 held-out product pages remain uncaptured because the analyst hourly rate and threshold confirmation are pending. **No complete real-site accuracy or pilot decision exists.** No competitor adapter has been configured or measured.
 
-After exact-scope approval and the proposed 15 October 2026 window, the approved process can count preflight, robots, and redirects against each site's GET ceiling, freeze original bytes and code revision, collect independent blind labels and adjudication, and record paired manual and assisted review. `benchmark.export_local` creates blind, manual-baseline, and corrected-row templates from an approved job. Its manifest leaves the separate preflight GET count and access-policy audit pending for the evaluator to record. `benchmark.replay` reports partial results as `incomplete`; `--finalize` requires all 24 approved outcomes, corrected rows, combined request and cost measurements, the access audit, and a customer-confirmed labor rate and thresholds before issuing a go/no-go decision. See the evaluation plan for commands and scoring rules.
+The four development bundles have original bytes, request settings, code revision, and blank blind-label, manual-baseline, and corrected-row templates. The hard worker does not return exact request counts on deadline failures; the live report gives a bounded total. Independent labels and paired review are still outstanding. `benchmark.replay` reports partial results as `incomplete`; `--finalize` requires all 24 approved outcomes, corrected rows, combined request and cost measurements, the access audit, and a customer-confirmed labor rate and thresholds before issuing a go/no-go decision. See the evaluation plan for commands and scoring rules.
